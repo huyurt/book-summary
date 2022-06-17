@@ -4559,3 +4559,77 @@ WHERE oldval < 20.0 AND newval >= 20.0
    	FOREIGN KEY(orderid) REFERENCES dbo.Orders(orderid);
 
 ## 9. Temporal Tables
+
+A system-versioned temporal table has two columns representing the validity period of the row, plus a linked history table with a mirrored schema holding older states of modified rows. When you need to modify data, you interact with the current table, issuing normal data-modification statements. SQL Server automatically updates the period columns and moves older versions of rows to the history table. When you need to query data, if you want the current state, you simply query the current table as usual. If you need access to older states, you still query the current table, but you add a clause indicating that you want to see an older state or period of time. SQL Server queries the current and history tables behind the scenes as needed.
+
+The SQL standard supports three types of temporal tables:
+
+- System-versioned temporal tables rely on the system transaction time to define the validity period of arow.
+- Application-time period tables rely on the application’s definition of the validity period of a row. This means you can define a validity period that will become effective in the future.
+- Bitemporal combines the two types just mentioned (transaction and valid time).
+
+### Creating Tables
+
+When you create a system-versioned temporal table, you need to make sure the table definition has all the following elements:
+
+- A primary key
+- Two columns defined as `DATETIME2` with any precision, which are non-nullable and represent the start and end of the row’s validity period in the UTC time zone
+- A start column that should be marked with the option `GENERATED ALWAYS AS ROW START`
+- An end column that should be marked with the option `GENERATED ALWAYS AS ROW END`
+- A designation of the period columns with the option `PERIOD FOR SYSTEM_TIME (<startcol>, <endcol>)`
+- The table option `SYSTEM_VERSIONING`, which should be set to `ON`
+-  A linked history table (which SQL Server can create for you) to hold the past states of modified rows
+
+````sql
+USE TSQLV4;
+
+-- Create Employees table
+CREATE TABLE dbo.Employees
+(
+    empid      INT                         NOT NULL
+    	CONSTRAINT PK_Employees PRIMARY KEY NONCLUSTERED,
+    empname    VARCHAR(25)                 NOT NULL,
+    department VARCHAR(50)                 NOT NULL,
+    salary     NUMERIC(10, 2)              NOT NULL,
+    sysstart   DATETIME2(0)
+    	GENERATED ALWAYS AS ROW START HIDDEN NOT NULL,
+    sysend     DATETIME2(0)
+    	GENERATED ALWAYS AS ROW END   HIDDEN NOT NULL,
+    PERIOD FOR SYSTEM_TIME (sysstart, sysend),
+    INDEX ix_Employees CLUSTERED(empid, sysstart, sysend)
+)
+WITH ( SYSTEM_VERSIONING = ON ( HISTORY_TABLE = dbo.EmployeesHistory ) )
+````
+
+Assuming the history table doesn’t exist when you run this code, SQL Server creates it for you. If you do not specify a name for the table, SQL Server assigns one for you using the form `MSSQL_TemporalHistoryFor_<object_id>`, where object_id is the object ID of the current table. SQL Server creates the history table with a mirrored schema of the current table, but with the following differences:
+
+- No primary key
+- A clustered index on (<endcol>, <startcol>), with page compression if possible
+- Period columns that are not marked with any special options, like `GENERATED ALWAYS AS ROWSTART/END` or `HIDDEN`
+- No designation of the period columns with the option `PERIOD FOR SYSTEM_TIME`
+- The history table is not marked with the option `SYSTEM_VERSIONING`
+
+If the history table already exists when you create the current table, SQL Server validates the consistency of both the schema (as just described) and the data (with no overlapping periods). If the history table doesn’t pass the consistency checks, SQL Server will produce an error at DDL time and won’t create the current table. You can optionally indicate you do not want SQL Server to perform the data-consistency check.
+
+
+
+You can also turn an existing nontemporal table that already has data into a temporal one.
+
+````sql
+ALTER TABLE dbo.Employees ADD
+	sysstart DATETIME2(0) GENERATED ALWAYS AS ROW START HIDDEN NOT NULL
+    	CONSTRAINT DFT_Employees_sysstart DEFAULT('19000101'),
+	sysend DATETIME2(0) GENERATED ALWAYS AS ROW END HIDDEN NOT NULL
+    	CONSTRAINT DFT_Employees_sysend DEFAULT('99991231 23:59:59'),
+	PERIOD FOR SYSTEM_TIME (sysstart, sysend)
+````
+
+You then alter the table to enable system versioning and to link it to a history table using the following code:
+
+````sql
+ALTER TABLE dbo.Employees
+	SET ( SYSTEM_VERSIONING = ON ( HISTORY_TABLE = dbo.EmployeesHistory ) )
+````
+
+
+
