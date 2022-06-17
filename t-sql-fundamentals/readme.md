@@ -22,7 +22,7 @@ Normalization is a formal mathematical process to guarantee that each entity wil
 USE TSQLV4; -- The USE statement sets the current database context to that of TSQLV4.
 DROP TABLE IF EXISTS dbo.Employees;
 
-CREATE TABLE dbo.Employees(  
+CREATE TABLE dbo.Employees(
     empid     INT         NOT NULL,
     firstname VARCHAR(30) NOT NULL,
     lastname  VARCHAR(30) NOT NULL,
@@ -38,7 +38,7 @@ CREATE TABLE dbo.Employees(  
 IF OBJECT_ID(N'dbo.Employees', N'U') IS NOT NULL DROP TABLE dbo.Employees;
 
 -- The OBJECT_ID function accepts an object name and type as inputs.
--- The type U represents a user table. 
+-- The type U represents a user table.
 ````
 
 ### Primary Key Constraint
@@ -60,7 +60,7 @@ ALTER TABLE dbo.Employees
 SQL Server’s implementation rejects duplicate `NULL`s. To emulate the standard unique constraint in SQL Server you can use a unique filtered index that filters only non-`NULL` values. 
 
 ````sql
-CREATE UNIQUE INDEX idx_ssn_notnull ON dbo.Employees(ssn) WHEREssn IS NOT NULL;
+CREATE UNIQUE INDEX idx_ssn_notnull ON dbo.Employees(ssn) WHERE ssn IS NOT NULL;
 ````
 
 ### Foreign Key Constraints
@@ -91,8 +91,8 @@ For `CASCADE` example, `ON DELETE CASCADE` means that when you delete a row from
 You can use a check constraint to define a predicate that a row must meet to be entered into the table or to be modified.
 
 ````sql
-ALTER TABLE dbo.Employees  
-	ADD CONSTRAINT CHK_Employees_salary  
+ALTER TABLE dbo.Employees
+	ADD CONSTRAINT CHK_Employees_salary
 	CHECK(salary > 0.00);
 ````
 
@@ -108,7 +108,7 @@ ALTER TABLE dbo.Orders  
 	DEFAULT(SYSDATETIME()) FOR orderts;
 ````
 
-The default expression invokes the `SYSDATETIME` function,which returns the current date and time value. After this default expression is defined, whenever you insert a row in the Orders table and do not explicitly specify a value in the orderts attribute, SQL Server will set the attribute value to `SYSDATETIME`.
+The default expression invokes the `SYSDATETIME` function, which returns the current date and time value. After this default expression is defined, whenever you insert a row in the Orders table and do not explicitly specify a value in the orderts attribute, SQL Server will set the attribute value to `SYSDATETIME`.
 
 ## 2. Single-Table Queries
 
@@ -161,7 +161,7 @@ Always keep in mind that T-SQL uses three-valued predicate logic, where logical 
 
 ### The `GROUP` Clause
 
-You can use the `GROUP BY` phase to arrange the rows returned by the previous logical query processing phase in groups. 
+You can use the `GROUP BY` phase to arrange the rows returned by the previous logical query processing phase in groups.
 
 All aggregate functions ignore `NULL`s, with one exception. For example, consider a group of five rows with the values 30, 10, NULL, 10, 10 in a column called qty. The expression `COUNT(qty)` returns 4 because there are four known values.
 
@@ -285,6 +285,8 @@ ORDER BY orderdate DESC
 -- (8 row(s) affected)
 ````
 
+Using the `WITH TIES` option, the selection of rows is deterministic, but the presentation order among rows with the same order date isn’t.
+
 ### The `OFFSET-FETCH` Filter
 
 The `OFFSET-FETCH` filter is considered an extension to the `ORDER BY` clause. With the `OFFSET` clause you indicate how many rows to skip, and with the `FETCH` clause you indicate how many rows to filter after the skipped rows.
@@ -338,11 +340,11 @@ SELECT empid, firstname, lastname FROM HR.Employees WHERE lastname LIKE N'D%';
 
 Notice the use of the letter _N_ to prefix the string _‘D%’_; it stands for _National_ and is used to denote that a character string is of a Unicode data type (_NCHAR_ or _NVARCHAR_), as opposed to a regular character data type (_CHAR_ or _VARCHAR_). Because the data type of the _lastname_ attribute is _NVARCHAR(40)_, the letter _N_ is used to prefix the string.
 
-Comparison operators:  =, >, <, >=, <=, <>, !=, !>, !<, of which the last three are not standard.
+Comparison operators:  `=`, `>`, `<`, `>=`, `<=`, `<>`, `!=`, `!>`, `!<`, of which the last three are not standard.
 
 Logical operators: _AND_, _OR_, and _NOT_
 
-Arithmetic operators: +, -, *, /, and %
+Arithmetic operators: `+`, `-`, `*`, `/`, and `%`
 
 Two integer columns, as in _col1/col2_, you need to cast the operands to the appropriate type if you want the calculation to be a numeric one: _CAST(col1 AS NUMERIC(12, 2))/CAST(col2 AS NUMERIC(12, 2))_. The data type _NUMERIC(12, 2)_ has a precision of 12 and a scale of 2, meaning that it has 12 digits in total, 2 of which are after the decimal point.
 
@@ -376,7 +378,7 @@ SELECT orderid, custid, val,
 FROM Sales.OrderValues;
 ````
 
-T-SQL supports some functions you can consider as abbreviations of the `CASE` expression: `ISNULL`, `COALESCE`, `IIF`, and `CHOOSE`. Only `COALESCE` is standard.
+T-SQL supports some functions you can consider as abbreviations of the `CASE` expression: `ISNULL`, `COALESCE`, `IIF`, `NULLIF` and `CHOOSE`. Only `COALESCE` is standard.
 
 The function `IIF(<logical_expression>, <expr1>, <expr2>)` returns _expr1_ if _logical_expression_ is `TRUE`, and it returns _expr2_ otherwise:
 
@@ -384,10 +386,37 @@ The function `IIF(<logical_expression>, <expr1>, <expr2>)` returns _expr1_ if _l
 IIF(col1 <> 0, col2/col1, NULL)
 ````
 
- The function `CHOOSE(<index>, <expr1>, <expr2>, ..., <exprn>)` returns the expression from the list in the specified index.
+The function `NULLIF(expression, expression)` returns a null value if the two specified expressions are equal.
+
+````sql
+NULLIF(empty_value, '')
+````
+
+The function `CHOOSE(<index>, <expr1>, <expr2>, ..., <exprn>)` returns the expression from the list in the specified index.
 
 ````sql
 CHOOSE(3, col1, col2, col3)
+````
+
+````sql
+SELECT orderdate, CHOOSE(MONTH(orderdate),'Winter', 'Winter', 'Spring', 'Spring', 'Spring', 'Summer',
+              'Summer', 'Summer', 'Autumn', 'Autumn', 'Autumn', 'Winter') AS Quarter_Modified
+FROM Sales.Orders
+ORDER BY orderdate;
+
+-- orderdate               Quarter_Modified
+-- ----------------------- ----------------
+-- 2002-05-02 19:03:56.933 Spring
+-- 2005-06-01 00:00:00.000 Summer
+-- 2005-06-01 00:00:00.000 Summer
+-- 2005-06-01 00:00:00.000 Summer
+-- 2006-06-01 00:00:00.000 Summer
+-- 2006-06-01 00:00:00.000 Summer
+-- 2006-06-01 00:00:00.000 Summer
+-- 2006-11-20 09:56:38.273 Autumn
+-- 2009-05-16 16:34:28.980 Spring
+-- 2009-05-16 16:34:28.980 Spring
+-- (10 rows affected)
 ````
 
 ### `NULL`s
@@ -485,6 +514,7 @@ SELECT SUBSTRING('abcde', 1, 3) -- abc
 `LEFT(string, n)`, `RIGHT(string, n)` : _n_, is the number of characters to extract from the left or right end of the string. 
 
 ````sql
+SELECT LEFT('abcde', 3) -- abc
 SELECT RIGHT('abcde', 3) -- cde
 ````
 
@@ -571,9 +601,11 @@ SELECT RTRIM(LTRIM('   abc   ')) -- abc
 
 ````sql
 SELECT FORMAT(1759, '000000000') -- 0000001759
+SELECT FORMAT(123456789, '##-##-#####') -- 12-34-56789
+SELECT FORMAT(456789, '##-##-#####') -- -4-56789
 ````
 
-The `COMPRESS` and `DECOMPRESS` functions
+##### The `COMPRESS` and `DECOMPRESS` functions
 
 `COMPRESS(string), DECOMPRESS(string)`: GZIP algorithm to compress and decompress the input, respectively.
 
@@ -868,7 +900,7 @@ SELECT
 	DATEFROMPARTS(2016, 02, 12),
 	DATETIME2FROMPARTS(2016, 02, 12, 13, 30, 5, 1, 7),
 	DATETIMEFROMPARTS(2016, 02, 12, 13, 30, 5, 997),
-	DATETIMEOFFSETFROMPARTS(2016, 02, 12, 13, 30, 5, 1, -8, 0,7),
+	DATETIMEOFFSETFROMPARTS(2016, 02, 12, 13, 30, 5, 1, -8, 0,  7),
 	SMALLDATETIMEFROMPARTS(2016, 02, 12, 13, 30),
 	TIMEFROMPARTS(13, 30, 5, 1, 7);
 ````
@@ -1279,7 +1311,7 @@ Table operators: `JOIN`, `APPLY`, `PIVOT`, `UNPIVOT`
 
 ### `CROSS JOIN`s
 
-The `CROSS JOIN` is the simplest type of join. Each row from one input is matched with all rows from the other. So if you have m rows in one table and n rows in the other, you get m×n rows in the result.
+The `CROSS JOIN` is the simplest type of join. Each row from one input is matched with all rows from the other. So if you have `m` rows in one table and `n` rows in the other, you get `m×n` rows in the result.
 
 ````sql
 -- ISO/ANSI SQL-92 syntax
@@ -1716,7 +1748,7 @@ SELECT custid, companyname
 FROM Sales.Customers AS C
 WHERE country = N'Spain'
 	AND EXISTS
-    	(SELECT * FROM Sales.Orders AS O
+    	(SELECT 1 FROM Sales.Orders AS O
          WHERE O.custid = C.custid)
 -- custid      companyname
 -- ----------- ----------------
@@ -1765,9 +1797,9 @@ WHERE custid NOT IN(SELECT O.custid
 ````sql
 SELECT shipper_id, companyname
 FROM Sales.MyShippers
-WHERE shipper_id IN  (SELECT shipper_id
-                      FROM Sales.Orders
-                      WHERE custid = 43)
+WHERE shipper_id IN (SELECT shipper_id
+                     FROM Sales.Orders
+                     WHERE custid = 43)
 -- shipper_id  companyname
 -- ----------- ---------------
 -- 1           Shipper GVSUA
@@ -1803,7 +1835,7 @@ WHERE shipper_id IN (SELECT O.shipperid
 
    ````sql
    SELECT orderid, orderdate, custid, empid
-   FROM Sales.OrdersWHERE orderdate = 
+   FROM Sales.Orders WHERE orderdate = 
    	(SELECT MAX(O.orderdate) FROM Sales.Orders AS O)
    ````
 
@@ -1875,7 +1907,7 @@ WHERE shipper_id IN (SELECT O.shipperid
 
    ````sql
    SELECT empid, FirstName, lastname
-   FROM HR.EmployeesWHERE empid NOT IN
+   FROM HR.Employees WHERE empid NOT IN
    	(SELECT O.empid
         FROM Sales.Orders AS O
         WHERE O.orderdate >= '20160501')
@@ -1947,7 +1979,7 @@ WHERE shipper_id IN (SELECT O.shipperid
    	(SELECT MAX(O2.orderdate)
         FROM Sales.Orders AS O2
         WHERE O2.custid = O1.custid)
-   ORDER BY custid;
+   ORDER BY custid
    ````
 
 6. Write a query that returns customers who placed orders in 2015 but not in 2016:
@@ -2360,7 +2392,7 @@ DROP VIEW IF EXISTS Sales.USACusts;
 GO
 CREATE VIEW Sales.USACusts
 AS
-SELECT custid, companyname, contactname, contacttitle,address, city, region, 	postalcode, country, phone, fax
+SELECT custid, companyname, contactname, contacttitle,address, city, region, postalcode, country, phone, fax
 FROM Sales.Customers
 WHERE country = N'USA';
 GO
@@ -2376,7 +2408,7 @@ The `ENCRYPTION` option indicates that SQL Server will internally store the text
 ````sql
 ALTER VIEW Sales.USACusts WITH ENCRYPTION
 AS
-SELECT custid, companyname, contactname, contacttitle,address, city, region, 	postalcode, country, phone, fax
+SELECT custid, companyname, contactname, contacttitle,address, city, region, postalcode, country, phone, fax
 FROM Sales.Customers
 WHERE country = N'USA';
 GO
@@ -2395,7 +2427,7 @@ It indicates that referenced objects cannot be dropped and that referenced colum
 ````sql
 ALTER VIEW Sales.USACusts WITH SCHEMABINDING
 AS
-SELECT custid, companyname, contactname, contacttitle, address, city, region, 	postalcode, country, phone, fax
+SELECT custid, companyname, contactname, contacttitle, address, city, region, postalcode, country, phone, fax
 FROM Sales.Customers
 WHERE country = N'USA';
 GO
@@ -2414,7 +2446,7 @@ The purpose of `CHECK OPTION` is to prevent modifications through the view that 
 ````sql
 ALTER VIEW Sales.USACusts WITH SCHEMABINDING
 AS
-SELECT custid, companyname, contactname, contacttitle, address, city, region, 	postalcode, country, phone, fax
+SELECT custid, companyname, contactname, contacttitle, address, city, region, postalcode, country, phone, fax
 FROM Sales.Customers
 WHERE country = N'USA'
 WITH CHECK OPTION;
@@ -2436,7 +2468,7 @@ CREATE FUNCTION dbo.GetCustOrders
 	(@cid AS INT) RETURNS TABLE
 AS
 RETURN
-	SELECT orderid, custid, empid, orderdate, requireddate, shippeddate, 			shipperid, freight, shipname, shipaddress, shipcity, shipregion, 			shippostalcode, shipcountry
+	SELECT orderid, custid, empid, orderdate, requireddate, shippeddate, shipperid, freight, shipname, shipaddress, shipcity, shipregion, 			shippostalcode, shipcountry
     FROM Sales.Orders
     WHERE custid = @cid;
 GO
@@ -2761,9 +2793,8 @@ FROM Sales.Customers AS C
    FROM orders
    GROUP BY orders.empid, orders.orderdate
    ORDER BY orders.empid, orders.orderdate
-   GO
    ````
-
+   
 8. Write a query against _Sales.VEmpOrders_ that returns the running total quantity for each employee and year:
 
    - Table involved: _Sales.VEmpOrders_ view
@@ -2957,7 +2988,7 @@ FROM Sales.Customers
 Not supports by T-SQL.
 
 ````sql
-WITH INTERSECT_ALLAS
+WITH INTERSECT_ALL AS
 (
     SELECT ROW_NUMBER()
     		OVER(PARTITION BY country, region, city
@@ -3006,7 +3037,8 @@ FROM Sales.Customers
 Not supports by T-SQL.
 
 ````sql
-WITH EXCEPT_ALLAS(
+WITH EXCEPT_ALL AS
+(
     SELECT ROW_NUMBER()
     	OVER(PARTITION BY country, region, city
         	 ORDER     BY (SELECT 0)) AS rownum,
@@ -3536,7 +3568,8 @@ GROUPING SETS(
     (YEAR(orderdate), MONTH(orderdate), DAY(orderdate)),
     (YEAR(orderdate), MONTH(orderdate)),
     (YEAR(orderdate)),
-    () )
+    ()
+)
 
 ROLLUP(YEAR(orderdate), MONTH(orderdate), DAY(orderdate))
 ````
@@ -3916,7 +3949,7 @@ CREATE TABLE dbo.T1
     keycol  INT         NOT NULL IDENTITY(1, 1)
     	CONSTRAINT PK_T1 PRIMARY KEY,
     datacol VARCHAR(10) NOT NULL
-    	CONSTRAINT CHK_T1_datacol CHECK(datacol 										LIKE'[ABCDEFGHIJKLMNOPQRSTUVWXYZ]%')
+    	CONSTRAINT CHK_T1_datacol CHECK(datacol LIKE '[ABCDEFGHIJKLMNOPQRSTUVWXYZ]%')
 )
 INSERT INTO dbo.T1(datacol) VALUES('AAAAA'),('CCCCC'),('BBBBB')
 
@@ -4096,3 +4129,433 @@ SELECT @first
 
 #### The `DELETE` statement
 
+````sql
+DELETE FROM dbo.Orders WHERE orderdate < '20150101'
+````
+
+The `DELETE` statement tends to be expensive when you delete a large number of rows, mainly because it’s a fully logged operation.
+
+#### The `TRUNCATE` statement
+
+The standard `TRUNCATE` statement deletes all rows from a table. Unlike the `DELETE` statement, `TRUNCATE` has no filter.
+
+````sql
+TRUNCATE TABLE dbo.T1
+````
+
+`TRUNCATE` is minimally logged. SQL Server records which blocks of data were deallocated by the operation so that it can reclaim those in case the transaction needs to be undone. Both `DELETE` and `TRUNCATE` are transactional. `TRUNCATE` resets the identity value back to the original seed, but `DELETE` doesn’t—even when used without a filter.
+
+The `TRUNCATE` statement is not allowed when the target table is referenced by a foreign-key constraint, even if the referencing table is empty and even if the foreign key is disabled. The only way to allow a `TRUNCATE` statement is to drop all foreign keys referencing the table with the `ALTER TABLE DROP CONSTRAINT` command. You can then re-create the foreign keys after truncating the table with the `ALTER TABLE ADD CONSTRAINT` command.
+
+##### `DELETE` based on a join
+
+````sql
+DELETE FROM O
+FROM dbo.Orders AS O
+	INNER JOIN dbo.Customers AS C
+		ON O.custid = C.custid
+WHERE C.country = N'USA'
+````
+
+### Updating Data
+
+`UPDATE`
+
+#### The `UPDATE` statement
+
+````sql
+UPDATE dbo.T1 SET col1 = col1 + 10, col2 *= 10;
+UPDATE dbo.T1 SET col1 = col2, col2 = col1; -- swap values
+````
+
+````sql
+UPDATE dbo.T1 SET (col1, col2, col3) =
+	(SELECT col1, col2, col3
+     FROM dbo.T2
+     WHERE T2.keycol = T1.keycol)
+WHERE EXISTS
+	(SELECT *   
+     FROM dbo.T2   
+     WHERE T2.keycol = T1.keycol
+     	AND T2.col4 = 'ABC')
+````
+
+##### Assignment `UPDATE`
+
+````sql
+DECLARE @nextval AS INT;
+
+UPDATE dbo.MySequences
+	SET @nextval = val += 1
+WHERE id = 'SEQ1';
+
+SELECT @nextval;
+````
+
+### Merging Data
+
+A task achieved by a single `MERGE` statement typically translates to a combination of several other DML statements (`INSERT`, `UPDATE`, and `DELETE`) without `MERGE`.
+
+The `MERGE` statement is part of the SQL standard, although the T-SQL version adds a few nonstandard extensions.
+
+````sql
+MERGE INTO dbo.Customers AS TGT
+USING dbo.CustomersStage AS SRC
+	ON TGT.custid = SRC.custid
+WHEN MATCHED AND
+		(   TGT.companyname <> SRC.companyname
+     		OR TGT.phone       <> SRC.phone
+     		OR TGT.address     <> SRC.address) THEN
+	UPDATE SET
+    	TGT.companyname = SRC.companyname,
+        TGT.phone = SRC.phone,
+        TGT.address = SRC.address
+WHEN NOT MATCHED THEN
+	INSERT (custid, companyname, phone, address)
+    VALUES (SRC.custid, SRC.companyname, SRC.phone, SRC.address)
+WHEN NOT MATCHED BY SOURCE THEN
+	DELETE
+````
+
+This `MERGE` statement defines the _Customers_ table as the target (in the `MERGE` clause) and the _CustomersStage_ table as the source (in the `USING` clause).
+
+### Modifying Data Through Table Expressions
+
+````sql
+UPDATE dbo.T1 SET col2 = ROW_NUMBER() OVER(ORDER BY col1);
+-- Msg 4108, Level 15, State 1, Line 672
+-- Windowed functions can only appear in the SELECT or ORDER BY clauses.
+
+WITH C AS
+(
+    SELECT col1, col2, ROW_NUMBER() OVER(ORDER BY col1) AS rownum
+    FROM dbo.T1
+)
+UPDATE C SET col2 = rownum;
+````
+
+#### Modifications with `TOP` and `OFFSET-FETCH`
+
+````sql
+WITH C AS
+(
+    SELECT *
+    FROM dbo.Orders
+    ORDER BY orderid DESC
+    OFFSET 0 ROWS FETCH NEXT 50 ROWS ONLY
+)
+UPDATE C SET freight += 10.00
+````
+
+````sql
+WITH C AS
+(
+    SELECT *
+    FROM dbo.Orders
+    ORDER BY orderid
+    OFFSET 0 ROWS FETCH NEXT 50 ROWS ONLY
+)
+DELETE FROM C
+````
+
+### The `OUTPUT` Clause
+
+Sometimes you might find it useful to return information from the modified rows for troubleshooting, auditing, and archiving. T-SQL supports this capability via a clause called `OUTPUT` that you add to the modification statement. In this clause, you specify attributes you want to return from the modified rows.
+
+#### `INSERT` with `OUTPUT`
+
+````sql
+DECLARE @NewRows TABLE(keycol INT, datacol NVARCHAR(40));
+
+INSERT INTO dbo.T1(datacol)
+	OUTPUT inserted.keycol, inserted.datacol
+    INTO @NewRows(keycol, datacol)
+    	SELECT lastname
+        FROM HR.Employees
+        WHERE country = N'UK';
+
+SELECT * FROM @NewRows;
+
+-- keycol      datacol
+-- ----------- -------------
+-- 6           Mortensen
+-- 7           Suurs
+-- 8           King
+-- 9           Doyle
+````
+
+#### `DELETE` with `OUTPUT`
+
+````sql
+DELETE FROM dbo.Orders  
+	OUTPUT
+    	deleted.orderid,
+        deleted.orderdate,
+        deleted.empid,
+        deleted.custid
+WHERE orderdate < '20160101'
+
+-- orderid     orderdate  empid       custid
+-- ----------- ---------- ----------- -----------
+-- 10248       2014-07-04 5           85
+-- 10249       2014-07-05 6           79
+-- 10250       2014-07-08 4           34
+-- 10251       2014-07-08 3           84
+-- ...
+-- 10803       2015-12-30 4           88
+-- 10804       2015-12-30 6           72
+-- 10805       2015-12-30 2           77
+-- 10806       2015-12-31 3           84
+-- 10807       2015-12-31 4           27
+-- (560 row(s) affected)
+````
+
+#### `UPDATE` with `OUTPUT`
+
+````sql
+UPDATE dbo.OrderDetails
+	SET discount += 0.05
+OUTPUT
+	inserted.orderid,
+    inserted.productid,
+    deleted.discount AS olddiscount,
+    inserted.discount AS newdiscount
+WHERE productid = 51
+
+-- orderid     productid   olddiscount  newdiscount
+-- ----------- ----------- ------------ ------------
+-- 10249       51          0.000        0.050
+-- 10250       51          0.150        0.200
+-- ...
+-- (39 row(s) affected)
+````
+
+#### `MERGE` with `OUTPUT`
+
+````sql
+MERGE INTO dbo.Customers AS TGT
+USING dbo.CustomersStage AS SRC
+	ON TGT.custid = SRC.custid
+WHEN MATCHED THEN
+	UPDATE SET
+    	TGT.companyname = SRC.companyname,
+        TGT.phone = SRC.phone,
+        TGT.address = SRC.address
+WHEN NOT MATCHED THEN
+	INSERT (custid, companyname, phone, address)
+    VALUES (SRC.custid, SRC.companyname, SRC.phone, SRC.address)
+OUTPUT $action AS theaction, inserted.custid,
+	deleted.companyname AS oldcompanyname,
+    inserted.companyname AS newcompanyname,
+    deleted.phone AS oldphone,
+    inserted.phone AS newphone,
+    deleted.address AS oldaddress,
+    inserted.address AS newaddress
+````
+
+#### Nested DML
+
+````sql
+INSERT INTO dbo.ProductsAudit(productid, colname, oldval, newval)
+	SELECT productid, N'unitprice', oldval, newval
+    FROM (UPDATE dbo.Products
+			SET unitprice *= 1.15
+		  OUTPUT
+          	inserted.productid,
+          	deleted.unitprice AS oldval,
+          	inserted.unitprice AS newval
+	WHERE supplierid = 1) AS D
+WHERE oldval < 20.0 AND newval >= 20.0
+````
+
+### Exercises
+
+1. ````sql
+   USE TSQLV4;
+   DROP TABLE IF EXISTS dbo.Customers;
+   CREATE TABLE dbo.Customers(
+       custid      INT          NOT NULL PRIMARY KEY,
+       companyname NVARCHAR(40) NOT NULL,
+       country     NVARCHAR(15) NOT NULL,
+       region      NVARCHAR(15) NULL,
+       city        NVARCHAR(15) NOT NULL
+   )
+   ````
+
+   1-1. Insert into the _dbo.Customers_ table a row with the following information:
+
+   - custid: 100
+   - companyname: Coho Winery
+   - country: USA
+   - region: WA
+   - city: Redmond
+
+   ````sql
+   INSERT INTO dbo.Customers
+   VALUES (100, N'Coho Winery', N'USA', N'WA', N'Redmond')
+   ````
+
+   1-2. Insert into the _dbo.Customers_ table all customers from _Sales.Customers_ who placed orders.
+
+   ````sql
+   INSERT INTO dbo.Customers
+   SELECT custid, companyname, country, region, city
+   FROM Sales.Customers AS C
+   WHERE EXISTS (
+   	SELECT 1 FROM Sales.Orders AS O
+   	WHERE O.custid = C.custid)
+   ````
+
+   1-3. Use a `SELECT INTO` statement to create and populate the _dbo.Orders_ table with orders from the _Sales.Orders_ table that were placed in the years 2014 through 2016.
+
+   ````sql
+   SELECT * INTO dbo.Orders
+   FROM Sales.Orders
+   WHERE YEAR(orderdate) BETWEEN 2014 AND 2016
+
+2. Delete from the _dbo.Orders_ table orders that were placed before August 2014. Use the `OUTPUT` clause to return the orderid and orderdate values of the deleted orders:
+
+   ````sql
+   DELETE FROM dbo.Orders
+   	OUTPUT
+   		deleted.orderid,
+   		deleted.orderdate
+   WHERE orderdate < '20140801'
+   ````
+
+3. Delete from the _dbo.Orders_ table orders placed by customers from Brazil.
+
+   ````sql
+   DELETE FROM dbo.Orders
+   WHERE EXISTS (
+   	SELECT 1 FROM Sales.Customers AS C
+   	WHERE Orders.custid = C.custid
+   	    AND C.country = N'Brazil')
+   ````
+
+4. Run the following query against _dbo.Customers_, and notice that some rows have a `NULL` in the region column:
+
+   ````sql
+   SELECT * FROM dbo.Customers;
+   
+   -- custid      companyname      country         region     city
+   -- ----------- ---------------- --------------- ---------- ---------------
+   -- 1           Customer NRZBB   Germany         NULL       Berlin
+   -- 2           Customer MLTDN   Mexico          NULL       México D.F.
+   -- 3           Customer KBUDE   Mexico          NULL       México D.F.
+   -- 4           Customer HFBZG   UK              NULL       London
+   -- 5           Customer HGVLZ   Sweden          NULL       Luleå
+   -- 6           Customer XHXJV   Germany         NULL       Mannheim
+   -- 7           Customer QXVLA   France          NULL       Strasbourg
+   -- 8           Customer QUHWH   Spain           NULL       Madrid
+   -- 9           Customer RTXGC   France          NULL       Marseille
+   -- 10          Customer EEALV   Canada          BC         Tsawassen
+   -- ...
+   -- (90 row(s) affected)
+   ````
+
+   Update the _dbo.Customers_ table, and change all `NULL` region values to <None>. Use the `OUTPUT` clause to show the _custid_, _oldregion_, and _newregion_:
+
+   - Desired output:
+
+   ````sql
+   -- custid      oldregion       newregion
+   -- ----------- --------------- ---------------
+   -- 1           NULL            <None>
+   -- 2           NULL            <None>
+   -- ...
+   -- 91          NULL            <None>
+   -- (58 row(s) affected)
+   ````
+
+   ````sql
+   UPDATE dbo.Customers
+   	SET region = '<None>'
+   OUTPUT
+   	deleted.custid,
+   	deleted.region as oldregion,
+   	inserted.region as newregion
+   WHERE region IS NULL
+   ````
+
+5. Update all orders in the _dbo.Orders_ table that were placed by United Kingdom customers, and set their _shipcountry_, _shipregion_, and _shipcity_ values to the _country_, _region_, and _city_ values of the corresponding customers.
+
+   ````sql
+   UPDATE O
+   	SET shipcountry = C.country,
+       	shipregion = C.region,
+           shipcity = C.city
+   FROM dbo.Orders AS O
+   INNER JOIN dbo.Customers AS C
+   	ON C.custid = O.custid
+   WHERE C.country = N'UK'
+   ````
+
+6. Run the following code to create the tables _Orders_ and _OrderDetails_ and populate them with data:
+
+   ````sql
+   USE TSQLV4;
+   
+   DROP TABLE IF EXISTS dbo.OrderDetails, dbo.Orders;
+   
+   CREATE TABLE dbo.Orders
+   (
+       orderid        INT          NOT NULL,
+       custid         INT          NULL,
+       empid          INT          NOT NULL,
+       orderdate      DATE         NOT NULL,
+       requireddate   DATE         NOT NULL,
+       shippeddate    DATE         NULL,
+       shipperid      INT          NOT NULL,
+       freight        MONEY        NOT NULL
+       	CONSTRAINT DFT_Orders_freight DEFAULT(0),
+       shipname       NVARCHAR(40) NOT NULL,
+       shipaddress    NVARCHAR(60) NOT NULL,
+       shipcity       NVARCHAR(15) NOT NULL,
+       shipregion     NVARCHAR(15) NULL,
+       shippostalcode NVARCHAR(10) NULL,
+       shipcountry    NVARCHAR(15) NOT NULL,
+       	CONSTRAINT PK_Orders PRIMARY KEY(orderid)
+   );
+   
+   CREATE TABLE dbo.OrderDetails
+   (
+       orderid   INT           NOT NULL,
+       productid INT           NOT NULL,
+       unitprice MONEY         NOT NULL
+       	CONSTRAINT DFT_OrderDetails_unitprice DEFAULT(0),
+       qty       SMALLINT      NOT NULL
+       	CONSTRAINT DFT_OrderDetails_qty DEFAULT(1),
+       discount  NUMERIC(4, 3) NOT NULL
+       	CONSTRAINT DFT_OrderDetails_discount DEFAULT(0),  
+       CONSTRAINT PK_OrderDetails PRIMARY KEY(orderid, productid),
+       CONSTRAINT FK_OrderDetails_Orders FOREIGN KEY(orderid)
+       	REFERENCES dbo.Orders(orderid),
+       CONSTRAINT CHK_discount  CHECK (discount BETWEEN 0 AND 1),
+       CONSTRAINT CHK_qty  CHECK (qty > 0),
+       CONSTRAINT CHK_unitprice CHECK (unitprice >= 0)
+   );
+   GO
+   
+   INSERT INTO dbo.Orders SELECT * FROM Sales.Orders;
+   INSERT INTO dbo.OrderDetails SELECT * FROM Sales.OrderDetails;
+   ````
+
+   Write and test the T-SQL code that is required to truncate both tables, and make sure your code runs successfully.
+
+   When you’re done, run the following code for cleanup:
+
+   ````sql
+   DROP TABLE IF EXISTS dbo.OrderDetails, dbo.Orders, dbo.Customers;
+   ````
+
+   ````sql
+   ALTER TABLE dbo.Orders DROP CONSTRAINT FK_OrderDetails_Orders;
+   
+   TRUNCATE TABLE dbo.OrderDetails;
+   TRUNCATE TABLE dbo.Orders;
+   
+   ALTER TABLE dbo.OrderDetails ADD CONSTRAINT FK_OrderDetails_Orders
+   	FOREIGN KEY(orderid) REFERENCES dbo.Orders(orderid);
+
+## 9. Temporal Tables
