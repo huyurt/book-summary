@@ -4631,5 +4631,337 @@ ALTER TABLE dbo.Employees
 	SET ( SYSTEM_VERSIONING = ON ( HISTORY_TABLE = dbo.EmployeesHistory ) )
 ````
 
+## 10. Transactions And Concurrency
+
+### Transactions
+
+`BEGIN TRAN`, `COMMIT TRAN`, and `ROLLBACK TRAN`
+
+```` sql
+BEGIN TRAN;
+	INSERT INTO dbo.T1(keycol, col1, col2) VALUES(4, 101, 'C');
+    INSERT INTO dbo.T2(keycol, col1, col2) VALUES(4, 201, 'X');
+COMMIT TRAN;
+````
+
+You can change the way SQL Server handles implicit transactions with a session option called `IMPLICIT_TRANSACTIONS`. When this option is turned on, you do not have to specify the `BEGIN TRAN` statement to mark the beginning of a transaction, but you have to mark the transaction’s end with a `COMMIT TRAN` or `ROLLBACK TRAN` statement.
+
+After one transaction commits or rolls back, unless you open another explicit transaction, the next statement executed implicitly begins another transaction.
 
 
+
+Transactions have four properties—_atomicity_, _consistency_, _isolation_, and _durability_—abbreviated with the acronym ACID:
+
+- Atomicity: A transaction is an atomic unit of work. Either all changes in the transaction take place or none do. If the system fails before a transaction is completed, upon restart, SQL Server undoes the changes that took place. Also, if errors are encountered during the transaction and the error is considered severe enough, such as the target filegroup being full when you try to insert data, SQL Server automatically rolls back the transaction. Some errors, such as primary-key violations and lock-expiration timeouts, are not considered severe enough to justify an automatic rollback of the transaction. If you want all errors to abort execution and cause any open transaction to roll back, you can enable a session option called `XACT_ABORT`.
+- Consistency: The term consistency refers to the state of the data that the relational database management system (RDBMS) gives you access to as concurrent transactions modify and query it. Consistency also refers to the fact that the database must adhere to all integrity rules that have been defined within it by constraints (such as primary keys, unique constraints, and foreign keys). The transaction transitions the database from one consistent state to another.
+- Isolation: Isolation ensures that transactions access only consistent data. With disk-based tables, SQL Server supports two different models to handle isolation: one based purely on locking, and another based on a combination of locking and row versioning. The model based on locking is the default in a box product. In this model, readers require shared locks. If the current state of the data is inconsistent, readers are blocked until the state of the data becomes consistent. In model based on row versioning, readers don’t take shared locks and don’t need to wait. If the current state of the data is inconsistent, the reader gets an older consistent state.
+- Durability: Data changes are always written to the database’s transaction log on disk before they are written to the data portion of the database on disk. After the commit instruction is recorded in the transaction log on disk, the transaction is considered durable even if the change hasn’t yet made it to the data portion on disk. When the system starts, either normally or after a system failure, SQL Server inspects the transaction log of each database and runs a recovery process with two phases: redo and undo. The redo phase involves rolling forward (replaying) all the changes from any transaction whose commit instruction is written to the log but whose changes haven’t yet made it to the data portion. The undo phase involves rolling back (undoing) the changes from any transaction whose commit instruction was not recorded in the log.
+
+````sql
+USE TSQLV4;
+
+-- Start a new transaction
+BEGIN TRAN;
+
+-- Declare a variable
+DECLARE @neworderid AS INT;
+
+-- Insert a new order into the Sales.Orders table
+INSERT INTO Sales.Orders
+	(custid, empid, orderdate, requireddate, shippeddate, shipperid, freight, shipname, shipaddress, shipcity, shippostalcode, shipcountry)
+VALUES
+	(85, 5, '20090212', '20090301', '20090216', 3, 32.38, N'Ship to 85-B', N'6789 rue de l''Abbaye', N'Reims', N'10345', N'France');
+
+-- Save the new order ID in a variable
+SET @neworderid = SCOPE_IDENTITY()
+
+-- Return the new order ID
+SELECT @neworderid AS neworderid;
+
+-- Insert order lines for the new order into Sales.OrderDetails
+INSERT INTO Sales.OrderDetails
+	(orderid, productid, unitprice, qty, discount)
+VALUES
+	(@neworderid, 11, 14.00, 12, 0.000), (@neworderid, 42, 9.80, 10, 0.000), (@neworderid, 72, 34.80, 5, 0.000);
+
+-- Commit the transaction
+COMMIT TRAN;
+````
+
+### Locks and blocking
+
+When you try to modify data, your transaction requests an exclusive lock on the data resource, regardless of your isolation level. If granted, the exclusive lock is held until the end of the transaction. For single-statement transactions, this means that the lock is held until the statement completes. For multi statement transactions, this means that the lock is held until all statements complete and the transaction is ended by a `COMMIT TRAN` or `ROLLBACK TRAN` command.
+
+In practical terms, this means that if one transaction modifies rows, until the transaction is completed, another transaction cannot modify the same rows. However, whether another transaction can read the same rows or not depends on its isolation level.
+
+
+
+As for reading data, the default isolation level is called `READ COMMITTED`. In this isolation, when you try to read data, by default your transaction requests a shared lock on the data resource and releases the lock as soon as the read statement is done with that resource. This lock mode is called “shared” because multiple transactions can hold shared locks on the same data resource simultaneously. Although you cannot change the lock mode and duration required when you’re modifying data, you can control the way locking is handled when you’re reading data by changing your isolation level.
+
+
+
+| Requested mode   | Granted Exclusive (X) | Granted Shared (S) | Granted Intent Exclusive (IX) | Granted Intent Shared (IS) |
+| ---------------- | --------------------- | ------------------ | ----------------------------- | -------------------------- |
+| Exclusive        | No                    | No                 | No                            | No                         |
+| Shared           | No                    | Yes                | No                            | Yes                        |
+| Intent Exclusive | No                    | No                 | Yes                           | Yes                        |
+| Intent Shared    | No                    | Yes                | Yes                           | Yes                        |
+
+To get lock information, including both locks that are currently granted to sessions and locks that sessions are waiting for, query the dynamic management view (DMV) `sys.dm_tran_locks`:
+
+````sql
+SELECT
+	request_session_id            AS sid,
+    resource_type                 AS restype,
+    resource_database_id          AS dbid,
+    DB_NAME(resource_database_id) AS dbname,
+    resource_description          AS res,
+    resource_associated_entity_id AS resid,
+    request_mode                  AS mode,
+    request_status                AS status
+FROM sys.dm_tran_locks
+````
+
+The `sys.dm_tran_locks` view gives you information about the IDs of the sessions involved in the blocking chain. A blocking chain is a chain of two or more sessions that are involved in the blocking situation. You could have session x blocking session y, session y blocking session z, and so on—hence the use of the term chain. To get information about the connections associated with those session IDs, query a view called `sys.dm_exec_connections` and filter only the session IDs that are involved:
+
+````sql
+SELECT
+	session_id AS sid,
+    connect_time,
+    last_read,
+    last_write,
+    most_recent_sql_handle
+FROM sys.dm_exec_connections
+
+-- sid    connect_time              last_read               last_write                most_recent_sql_handle
+-- ------ ------------------------- ----------------------- ------------------------- --------------------------------------------------
+-- 52     2016-06-25 15:20:03.360   2016-06-25 15:20:15.750 2016-06-25 15:20:15.817   0x01000800DE2DB71FB0936F05000000000000000000000000
+-- 53     2016-06-25 15:20:07.300   2016-06-25 15:20:20.950 2016-06-25 15:20:07.327   0x0200000063FC7D052E09844778CDD615CFE7A2D1FB411802
+````
+
+The information that this query gives you about the connections includes
+
+- The time they connected.
+- The time of their last read and write.
+- A binary value holding a handle to the most recent SQL batch run by the connection. You provide this handle as an input parameter to a table function called `sys.dm_exec_sql_text`, and the function returns the batch of code represented by the handle. You can query the table function passing the binary handle explicitly.
+
+````sql
+SELECT session_id, text
+FROM sys.dm_exec_connections
+	CROSS APPLY sys.dm_exec_sql_text(most_recent_sql_handle) AS ST
+	
+-- session_id  text
+-- ----------- -------------------------------------
+-- 52          BEGIN TRAN;              
+-- 				UPDATE Production.Products
+-- 					SET unitprice += 1.00
+-- 				WHERE productid = 2;
+-- 53          (@1 tinyint)
+-- 			   SELECT [productid],[unitprice]
+-- 			   FROM [Production].[Products]
+-- 			   WHERE [productid]=@1
+````
+
+The blocked session—53—shows the query that is waiting because that’s the last thing the session ran. As for the blocker, in this example, you can see the statement that caused the problem, but keep in mind that the blocker might continue working and that the last thing you see in the code isn’t necessarily the statement that caused the trouble.
+
+
+
+In SQL Server 2016, you can use the function `sys.dm_exec_input_buffer` instead of `sys.dm_exec_sql_text` to get the code that the sessions of interest submitted last. The function accepts a session ID and request ID (from `sys.dm_exec_requests`, which is described shortly), or a NULL instead of a request ID if the ID is not relevant. Here’s the code to replace the last example using the new function:
+
+````sql
+SELECT session_id, event_info
+FROM sys.dm_exec_connections
+	CROSS APPLY sys.dm_exec_input_buffer(session_id, NULL) AS IB
+````
+
+You can also find a lot of useful information about the sessions involved in a blocking situation in the DMV `sys.dm_exec_sessions`.
+
+````sql
+SELECT
+	session_id AS sid,
+    login_time,
+    host_name,
+    program_name,
+    login_name,
+    nt_user_name,
+    last_request_start_time,
+    last_request_end_time
+FROM sys.dm_exec_sessions
+````
+
+Another DMV you’ll probably find useful for troubleshooting blocking situations is `sys.dm_exec_requests`. This view has a row for each active request, including blocked requests. In fact, you can easily isolate blocked requests because the attribute `blocking_session_id` is greater than zero.
+
+````sql
+SELECT
+	session_id AS sid,
+    blocking_session_id,
+    command,
+    sql_handle,
+    database_id,
+    wait_type,
+    wait_time,
+    wait_resource
+FROM sys.dm_exec_requests
+WHERE blocking_session_id > 0
+````
+
+Alternatively, you can query a DMV called `sys.dm_os_waiting_tasks`, which has only tasks that are currently waiting. It also has an attribute called `blocking_session_id`, and to troubleshoot blocking you’ll filter only the waiting tasks where this attribute is greater than zero. Some information in this view overlaps with that in the `sys.dm_exec_requests` view, but it does provide a few attributes that are unique to it with some more information, like the resource description that is in conflict.
+
+If you need to terminate the blocker you can do so by using the `KILL<session_id>` command. 
+
+If you want to restrict the amount of time your session waits for a lock, you can set a session option called `LOCK_TIMEOUT`. 
+
+````sql
+SET LOCK_TIMEOUT 5000;
+SELECT productid, unitprice
+FROM Production.Products
+WHERE productid = 2
+````
+
+### Isolation levels
+
+Based on the pure locking model: `READ UNCOMMITTED`, `READ COMMITTED` (default), `REPEATABLE READ`, and `SERIALIZABLE`.
+
+Based on a combination of locking and row versioning: `SNAPSHOT` and `READ COMMITTED SNAPSHOT`.
+
+You can set the isolation level of the whole session by using the following command:
+
+````sql
+SET TRANSACTION ISOLATION LEVEL <isolation name>
+````
+
+You can use a table hint to set the isolation level of a query:
+
+````sql
+SELECT ... FROM <table> WITH (<isolationname>);
+````
+
+`NOLOCK` is the equivalent of specifying `READUNCOMMITTED`, and `HOLDLOCK` is the equivalent of specifying `SERIALIZABLE`.
+
+The default isolation level in a SQL Server box product instance is `READ COMMITTED` (based on locking).
+
+| Isolation level         | Allows uncommitted reads? | Allows nonrepeatable reads? | Allows lost updates? | Allows phantom reads? | Detects update conflicts? | Uses row versioning? |
+| ----------------------- | ------------------------- | --------------------------- | -------------------- | --------------------- | ------------------------- | -------------------- |
+| READ UNCOMMITTED        | Yes                       | Yes                         | Yes                  | Yes                   | No                        | No                   |
+| READ COMMITTED          | No                        | Yes                         | Yes                  | Yes                   | No                        | No                   |
+| READ COMMITTED SNAPSHOT | No                        | Yes                         | Yes                  | Yes                   | No                        | Yes                  |
+| REPEATABLE READ         | No                        | No                          | No                   | Yes                   | No                        | No                   |
+| SERIALIZABLE            | No                        | No                          | No                   | No                    | No                        | No                   |
+| SNAPSHOT                | No                        | No                          | No                   | No                    | Yes                       | Yes                  |
+
+#### The `READ UNCOMMITTED` isolation level
+
+A writer can change data while a reader that is running under the `READ UNCOMMITTED` isolation level reads data. The reader can read uncommitted changes (also known as dirty reads).
+
+````sql
+-- uncommitted command
+BEGIN TRAN;
+UPDATE Production.Products
+	SET unitprice += 1.00 -- 19.00 -> 20.00
+WHERE productid = 2;
+
+SELECT productid, unitprice
+FROM Production.Products
+WHERE productid = 2;
+
+-- productid   unitprice
+-- ----------- ---------------------
+-- 2           20.00
+
+
+-- another query in same time (dirty read)
+SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+
+SELECT productid, unitprice
+FROM Production.Products
+WHERE productid = 2;
+
+-- productid   unitprice
+-- ----------- ---------------------
+-- 2           20.00
+````
+
+#### The `READ COMMITTED` isolation level
+
+This isolation level allows readers to read only committed changes. It prevents uncommitted reads by requiring a reader to obtain a shared lock.
+
+````sql
+-- uncommitted command
+BEGIN TRAN;
+UPDATE Production.Products
+	SET unitprice += 1.00 -- 19.00 -> 20.00
+WHERE productid = 2;
+
+SELECT productid, unitprice
+FROM Production.Products
+WHERE productid = 2;
+
+-- productid   unitprice
+-- ----------- ---------------------
+-- 2           20.00
+
+
+-- another query in same time (non dirty read)
+SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+SELECT productid, unitprice
+FROM Production.Products
+WHERE productid = 2;
+-- query waits until commit tran command
+````
+
+#### The `REPEATABLE READ` isolation level
+
+If you want to ensure that no one can change values in between reads that take place in the same transaction, you need to move up in the isolation levels to `REPEATABLE READ`.
+
+#### The `SERIALIZABLE` isolation level
+
+The reader locks not only the existing rows that qualify for the query’s filter, but also future ones. It blocks attempts made by other transactions to add rows that qualify for the reader’s query filter.
+
+````sql
+-- uncommitted command
+SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+
+BEGIN TRAN
+SELECT productid, productname, categoryid, unitprice
+FROM Production.Products
+WHERE categoryid = 1
+
+-- productid     productname      categoryid    unitprice
+-- -----------   --------------   -----------   ---------------------
+-- 1             Product HHYDP    1             18.00
+-- 2             Product RECZE    1             19.00
+-- 24            Product QOGNU    1             4.50
+-- 34            Product SWNJY    1             14.00
+-- 35            Product NEVTJ    1             18.00
+-- 38            Product QDOMO    1             263.50
+-- 39            Product LSOFL    1             18.00
+-- 43            Product ZZZHR    1             46.00
+-- 67            Product XLXQF    1             14.00
+-- 70            Product TOONT    1             15.00
+-- 75            Product BWRLG    1             7.75
+-- 76            Product JYGFE    1             18.00
+-- (12 row(s) affected)
+
+-- another query in same time (blocked by upper query)
+INSERT INTO Production.Products
+	(productname, categoryid, unitprice)
+VALUES('Product ABCDE', 1, 20.00)
+-- query waits until commit tran command
+````
+
+#### Isolation levels based on row versioning
+
+SQL Server can store previous versions of committed rows in `tempdb`. 
+
+The `SNAPSHOT` isolation level is logically similar to the `SERIALIZABLE` isolation level in terms of the types of consistency problems that can or cannot happen; the `READ COMMITTEDSNAPSHOT` isolation level is similar to the `READ COMMITTED` isolation level.
+
+#### Deadlocks
+
+A deadlock is a situation in which two or more sessions block each other. An example of a deadlock involving more than two sessions is when session A blocks session B, session B blocks session C, and session C blocks session A. In any of these cases, SQL Server detects the deadlock and intervenes by terminating one of the transactions. If SQL Server did not intervene, the sessions involved would remain deadlocked forever.
+
+You can set a session option called `DEADLOCK_PRIORITY` to one of 21 values in the range –10 through 10.
+
+The longer the transactions are, the longer locks are kept, increasing the probability of deadlocks.
+
+## 11. Programmable Objects
