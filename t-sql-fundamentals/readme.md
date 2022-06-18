@@ -1,4 +1,7 @@
-# Explain the difference between IN and EXISTS.Notes of T-SQL Fundamentals
+![cover](images/cover.jpg)
+
+# Notes of T-SQL Fundamentals
+
 
 ## 1. Background to T-SQL Querying and Programming
 
@@ -2912,7 +2915,7 @@ FROM Sales.Customers AS C
 
 ### The `UNION` Operator
 
-![union](images\union.png)
+![union](images/union.png)
 
 ````sql
 SELECT country, region, city 
@@ -2968,7 +2971,7 @@ FROM Sales.Customers
 
 The `INTERSECT` operator returns only the rows that are common to the results of the two input queries.
 
-![intersect](images\intersect.png)
+![intersect](images/intersect.png)
 
 ````sql
 SELECT country, region, city 
@@ -3018,7 +3021,7 @@ FROM INTERSECT_ALL
 
 The `EXCEPT` operator returns only distinct rows that appear in the first set but not the second.
 
-![except](images\except.png)
+![except](images/except.png)
 
 ````sql
 SELECT country, region, city 
@@ -3458,7 +3461,7 @@ GROUP BY empid, custid
 -- 3           D         30
 ````
 
-![pivotingdata](images\pivotingdata.png)
+![pivotingdata](images/pivotingdata.png)
 
 ##### Pivoting with a grouped query
 
@@ -4965,3 +4968,553 @@ You can set a session option called `DEADLOCK_PRIORITY` to one of 21 values in t
 The longer the transactions are, the longer locks are kept, increasing the probability of deadlocks.
 
 ## 11. Programmable Objects
+
+_variables_
+
+_batches_
+
+_flow elements_
+
+_cursors_
+
+_temporary tables_
+
+_routines_ such as user-defined functions, stored procedures, and triggers
+
+_dynamic SQL_
+
+### Variables
+
+You use variables to temporarily store data values for later use in the same batch in which they were declared.
+
+````sql
+DECLARE @i AS INT;
+SET @i = 10;
+
+DECLARE @i AS INT = 10;
+````
+
+````sql
+DECLARE @firstname AS NVARCHAR(20), @lastname AS NVARCHAR(40);
+
+SELECT  @firstname = firstname,  @lastname  = lastname
+FROM HR.Employees
+WHERE empid = 3;
+
+SELECT @firstname AS firstname, @lastname AS lastname;
+````
+
+### Batches
+
+A batch is one or more T-SQL statements sent by a client application to SQL Server for execution as a single unit.
+
+SQL Server utilities such as SQL Server Management Studio (SSMS), SQLCMD, and OSQL provide a client tool command called `GO` that signals the end of a batch. Note that the `GO` command is a client tool command and not a T-SQL server command.
+
+````sql
+-- Valid batch
+PRINT 'First batch';
+USE TSQLV4;
+GO
+-- Invalid batch
+PRINT 'Second batch';
+SELECT custid FROM Sales.Customers;
+SELECT orderid FOM Sales.Orders;
+GO
+-- Valid batch
+PRINT 'Third batch';
+SELECT empid FROM HR.Employees;
+````
+
+````sql
+DECLARE @i AS INT;
+SET @i = 10;
+-- Succeeds
+PRINT @i;
+GO
+-- Fails
+PRINT @i;
+-- Msg 137, Level 15, State 2, Line 106
+-- Must declare the scalar variable "@i".
+````
+
+The following statements cannot be combined with other statements in the same batch: `CREATE DEFAULT`, `CREATE FUNCTION`, `CREATE PROCEDURE`, `CREATE RULE`, `CREATE SCHEMA`, `CREATE TRIGGER`, and `CREATE VIEW`.
+
+### Flow Elements
+
+`IF` ... `ELSE`, `WHILE`
+
+### Cursors
+
+You can use to process rows from a result of a query one at a time and in a requested order. The cursor code is usually many times slower than the set-based code. Cursor solutions tend to be longer, less readable, and harder to maintain than set-based solutions.
+
+Working with a cursor generally involves the following steps:
+
+1. Declare the cursor based on a query.
+2. Open the cursor.
+3. Fetch attribute values from the first cursor record into variables.
+4. As long as you haven’t reached the end of the cursor (while the value of a function called @@FETCH_STATUS is 0), loop through the cursor records; in each iteration of the loop, perform the processing needed for the current row, and then fetch the attribute values from the next row into the variables.
+5. Close the cursor.
+6. Deallocate the cursor.
+
+````sql
+SET NOCOUNT ON;
+
+DECLARE @Result AS TABLE
+(
+    custid     INT,
+    ordermonth DATE,
+    qty        INT,
+    runqty     INT,
+    PRIMARY KEY(custid, ordermonth)
+);
+
+DECLARE
+	@custid     AS INT,
+    @prvcustid  AS INT,
+    @ordermonth AS DATE,
+    @qty        AS INT,
+    @runqty     AS INT;
+
+DECLARE C CURSOR FAST_FORWARD /* read only, forward only */ FOR
+	SELECT custid, ordermonth, qty
+    FROM Sales.CustOrders
+    ORDER BY custid, ordermonth;
+    
+OPEN C;
+
+FETCH NEXT FROM C INTO @custid, @ordermonth, @qty;
+
+SELECT @prvcustid = @custid, @runqty = 0;
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
+	IF @custid <> @prvcustid
+    	SELECT @prvcustid = @custid, @runqty = 0;
+
+	SET @runqty = @runqty + @qty;
+    
+    INSERT INTO @Result VALUES(@custid, @ordermonth, @qty, @runqty);
+    
+    FETCH NEXT FROM C INTO @custid, @ordermonth, @qty;
+    
+END;
+    
+CLOSE C;
+
+DEALLOCATE C;
+
+SELECT
+	custid,
+    CONVERT(VARCHAR(7), ordermonth, 121) AS ordermonth,
+    qty,
+    runqty
+FROM @Result
+ORDER BY custid, ordermonth;
+````
+
+### Temporary Tables
+
+_local temporary tables_, _global temporary tables_, and _table variables_.
+
+#### Local temporary tables
+
+A local temporary table is visible only to the session that created it, in the creating level and all inner levels in the call stack (inner procedures, triggers, and dynamic batches). A local temporary table is destroyed automatically by SQL Server when the creating level in the call stack goes out of scope.
+
+SQL Server internally adds a suffix to the table name that makes it unique in `tempdb`.
+
+Local temporary tables are useful is when you have a process that needs to store intermediate results temporarily—such as during a loop—and later query the data. Another scenario is when you need to access the result of some expensive processing multiple times.
+
+````sql
+DROP TABLE IF EXISTS #MyOrderTotalsByYear;
+GO
+
+CREATE TABLE #MyOrderTotalsByYear
+(
+    orderyear INT NOT NULL PRIMARY KEY,
+    qty       INT NOT NULL
+);
+
+INSERT INTO #MyOrderTotalsByYear(orderyear, qty)
+	SELECT
+    	YEAR(O.orderdate) AS orderyear,
+        SUM(OD.qty) AS qty
+	FROM Sales.Orders AS O
+    	INNER JOIN Sales.OrderDetails AS OD
+        	ON OD.orderid = O.orderid
+	GROUP BY YEAR(orderdate);
+	
+SELECT Cur.orderyear, Cur.qty AS curyearqty, Prv.qty AS prvyearqty
+FROM #MyOrderTotalsByYear AS Cur
+	LEFT OUTER JOIN #MyOrderTotalsByYear AS Prv
+    	ON Cur.orderyear = Prv.orderyear + 1;
+
+-- orderyear   curyearqty  prvyearqty
+-- ----------- ----------- -----------
+-- 2014        9581        NULL
+-- 2015        25489       9581
+-- 2016        16247       25489
+````
+
+#### Global temporary tables
+
+When you create a global temporary table, it’s visible to all other sessions. Global temporary tables are destroyed automatically by SQL Server when the creating session disconnects and there are no active references to the table. You create a global temporary table by naming it with two pound signs as a prefix, such as ##T1. Global temporary tables are useful when you want to share temporary data with everyone.
+
+````sql
+CREATE TABLE ##Globals
+(
+    id  sysname     NOT NULL PRIMARY KEY,
+    val SQL_VARIANT NOT NULL
+)
+````
+
+#### Table variables
+
+Like local temporary tables, table variables are visible only to the creating session, but because they are variables they have a more limited scope: only the current batch. Table variables are visible neither to inner batches in the call stack nor to subsequent batches in the session.
+
+If an explicit transaction is rolled back, changes made to temporary tables in that transaction are rolled back as well; however, changes made to table variables by statements that completed in the transaction aren’t rolled back. Only changes made by the active statement that failed or that was terminated before completion are undone.
+
+````sql
+DECLARE @MyOrderTotalsByYear TABLE
+(
+    orderyear INT NOT NULL PRIMARY KEY,
+    qty       INT NOT NULL
+);
+
+INSERT INTO @MyOrderTotalsByYear(orderyear, qty)
+	SELECT
+    	YEAR(O.orderdate) AS orderyear,
+        SUM(OD.qty) AS qty
+	FROM Sales.Orders AS O
+    	INNER JOIN Sales.OrderDetails AS OD
+        	ON OD.orderid = O.orderid
+	GROUP BY YEAR(orderdate);
+
+SELECT Cur.orderyear, Cur.qty AS curyearqty, Prv.qty AS prvyearqty
+FROM @MyOrderTotalsByYear AS Cur
+	LEFT OUTER JOIN @MyOrderTotalsByYear AS Prv
+    	ON Cur.orderyear = Prv.orderyear + 1;
+
+-- orderyear   curyearqty  prvyearqty
+-- ----------- ----------- -----------
+-- 2014        9581        NULL
+-- 2015        25489       9581
+-- 2016        16247       25489
+````
+
+### Table Types
+
+````sql
+DROP TYPE IF EXISTS dbo.OrderTotalsByYear;
+
+CREATE TYPE dbo.OrderTotalsByYear AS TABLE
+(
+    orderyear INT NOT NULL PRIMARY KEY,
+    qty       INT NOT NULL
+);
+GO
+
+DECLARE @MyOrderTotalsByYear AS dbo.OrderTotalsByYear;
+
+INSERT INTO @MyOrderTotalsByYear(orderyear, qty)
+	SELECT
+    	YEAR(O.orderdate) AS orderyear,
+        SUM(OD.qty) AS qty
+	FROM Sales.Orders AS O
+    	INNER JOIN Sales.OrderDetails AS OD
+        	ON OD.orderid = O.orderid
+	GROUP BY YEAR(orderdate);
+
+SELECT orderyear, qty FROM @MyOrderTotalsByYear;
+
+-- orderyear   qty
+-- ----------- -----------
+-- 2014        9581
+-- 2015        25489
+-- 2016        16247
+````
+
+### Dynamic SQL
+
+SQL Server provides two ways of executing dynamic SQL: using the `EXEC` command, and using the `sp_executesql` stored procedure.
+
+Dynamic SQL is useful for several purposes, including the following ones:
+
+- Automating administrative tasks: For example, querying metadata and constructing and executing a `BACKUP DATABASE` statement for each database in the instance
+- Improving performance of certain tasks: For example, constructing parameterized ad-hoc queries that can reuse previously cached execution plans
+- Constructing elements of the code based on querying the actual data: For example, constructing a `PIVOT` query dynamically when you don’t know ahead of time which elements should appear in the `IN` clause of the `PIVOT` operator
+
+#### The `EXEC` command
+
+The `EXEC` command accepts a character string in parentheses as input and executes the batch of code within the character string.
+
+````sql
+DECLARE @sql AS VARCHAR(100);
+SET @sql = 'PRINT ''This message was printed by a dynamic SQL batch.'';';
+EXEC(@sql);
+````
+
+#### The `sp_executesql` stored procedure
+
+The `sp_executesql` stored procedure is an alternative tool to the `EXEC` command for executing dynamic SQL code. It’s more secure and more flexible in the sense that it has an interface; that is, it supports input and output parameters.
+
+````sql
+DECLARE @sql AS NVARCHAR(100);
+
+SET @sql = N'SELECT orderid, custid, empid, orderdate
+FROM Sales.Orders
+WHERE orderid = @orderid;';
+
+EXEC sp_executesql
+	@stmt = @sql,
+    @params = N'@orderid AS INT',
+    @orderid = 10248;
+
+-- orderid     custid      empid       orderdate
+-- ----------- ----------- ----------- -----------
+-- 10248       85          5           2014-07-04
+````
+
+#### Using `PIVOT` with Dynamic SQL
+
+````sql
+-- static query
+SELECT *
+FROM (SELECT shipperid, YEAR(orderdate) AS orderyear, freight
+      FROM Sales.Orders) AS D
+	PIVOT(SUM(freight) FOR orderyear IN([2014],[2015],[2016])) AS P;
+
+-- shipperid   2014         2015          2016
+-- ----------- ------------ ------------- -------------
+-- 3           4233.78      11413.35      4865.38
+-- 1           2297.42      8681.38       5206.53
+-- 2           3748.67      12374.04      12122.14
+
+
+-- dynamic query
+DECLARE
+	@sql       AS NVARCHAR(1000),
+    @orderyear AS INT,
+    @first     AS INT;
+
+DECLARE C CURSOR FAST_FORWARD FOR
+	SELECT DISTINCT(YEAR(orderdate)) AS orderyear  
+	FROM Sales.Orders
+    ORDER BY orderyear;
+
+SET @first = 1;
+
+SET @sql = N'SELECT *
+FROM (SELECT shipperid, YEAR(orderdate) AS orderyear, freight
+	  FROM Sales.Orders) AS D
+	PIVOT(SUM(freight) FOR orderyear IN(';
+
+OPEN C;
+
+FETCH NEXT FROM C INTO @orderyear;
+
+WHILE @@fetch_status = 0
+BEGIN
+	IF @first = 0
+    	SET @sql += N','
+	ELSE
+    	SET @first = 0;
+	
+	SET @sql += QUOTENAME(@orderyear);
+    
+    FETCH NEXT FROM C INTO @orderyear;
+END;
+
+CLOSE C;
+    
+DEALLOCATE C;
+
+SET @sql += N')) AS P;';
+
+EXEC sp_executesql @stmt = @sql;
+````
+
+### Routings
+
+Routines are programmable objects that encapsulate code to calculate a result or to execute activity.
+
+_user-defined functions_, _stored procedures_, and _triggers_.
+
+#### User-defined functions
+
+The purpose of a user-defined function (UDF) is to encapsulate logic that calculates something, possibly based on input parameters, and return a result.
+
+UDFs are not allowed to apply any schema or data changes in the database.
+
+SQL Server supports scalar and table-valued UDFs. Scalar UDFs return a single value; table-valued UDFs return a table. One benefit of using UDFs is that you can incorporate them into queries. Scalar UDFs can appear anywhere in the query where an expression that returns a single value can appear (for example, in the `SELECT` list). Table UDFs can appear in the `FROM` clause of a query.
+
+````sql
+DROP FUNCTION IF EXISTS dbo.GetAge;
+GO
+
+CREATE FUNCTION dbo.GetAge
+(
+    @birthdate AS DATE,
+    @eventdate AS DATE
+)
+RETURNS INT
+AS
+BEGIN
+	RETURN
+    	DATEDIFF(year, @birthdate, @eventdate)
+        - CASE WHEN 100 * MONTH(@eventdate) + DAY(@eventdate)
+        < 100 * MONTH(@birthdate) + DAY(@birthdate)
+        	THEN 1 ELSE 0
+		END;
+END;
+GO
+
+SELECT
+	empid, firstname, lastname, birthdate,
+    dbo.GetAge(birthdate, SYSDATETIME()) AS age
+FROM HR.Employees;
+````
+
+#### Stored procedures
+
+Stored procedures can have input and output parameters, they can return result sets of queries, and they are allowed to have side effects. Not only can you modify data through stored procedures, you can also apply schema changes through them.
+
+Compared to using ad-hoc code, the use of stored procedures gives you many benefits:
+
+-  Stored procedures encapsulate logic.
+- Stored procedures give you better control of security.
+- You can incorporate all error-handling code within a procedure, silently taking corrective action where relevant.
+- Stored procedures give you performance benefits.
+
+````sql
+DROP PROC IF EXISTS Sales.GetCustomerOrders;
+GO
+
+CREATE PROC Sales.GetCustomerOrders
+	@custid   AS INT,
+    @fromdate AS DATETIME = '19000101',
+    @todate   AS DATETIME = '99991231',
+    @numrows  AS INT OUTPUT
+AS
+SET NOCOUNT ON;
+
+SELECT orderid, custid, empid, orderdate
+FROM Sales.Orders
+WHERE custid = @custid
+	AND orderdate >= @fromdate
+    AND orderdate < @todate;
+
+SET @numrows = @@rowcount;
+GO
+
+DECLARE @rc AS INT;
+EXEC Sales.GetCustomerOrders
+	@custid   = 1,
+    @fromdate = '20150101',
+    @todate   = '20160101',
+    @numrows  = @rc OUTPUT;
+SELECT @rc AS numrows;
+````
+
+#### Triggers
+
+A trigger is a special kind of stored procedure—one that cannot be executed explicitly. Instead, it’s attached to an event. Whenever the event takes place, the trigger fires and the trigger’s code runs. SQL Server supports the association of triggers with two kinds of events: data manipulation events (DML triggers) such as `INSERT`, and data definition events (DDL triggers) such as `CREATE TABLE`.
+
+A trigger is considered part of the transaction that includes the event that caused the trigger to fire. Issuing a `ROLLBACK TRAN` command within the trigger’s code causes a rollback of all changes that took place in the trigger, and also of all changes that took place in the transaction associated with the trigger.
+
+##### DML triggers
+
+_after_ and _instead of_
+
+````sql
+CREATE TRIGGER trg_T1_insert_audit ON dbo.T1 AFTER INSERT
+AS
+SET NOCOUNT ON;
+
+INSERT INTO dbo.T1_Audit(keycol, datacol)
+	SELECT keycol, datacol FROM inserted;
+````
+
+##### DDL triggers
+
+_database scope_ and _server scope_
+
+````sql
+CREATE TRIGGER trg_audit_ddl_events
+	ON DATABASE FOR DDL_DATABASE_LEVEL_EVENTS
+AS
+
+SET NOCOUNT ON;
+
+DECLARE @eventdata AS XML = eventdata();
+
+INSERT INTO dbo.AuditDDLEvents(
+    posttime, eventtype, loginname, schemaname,
+    objectname, targetobjectname, eventdata)
+    VALUES(
+        @eventdata.value('(/EVENT_INSTANCE/PostTime)[1]',         'VARCHAR(23)'),
+        @eventdata.value('(/EVENT_INSTANCE/EventType)[1]',        'sysname'),
+        @eventdata.value('(/EVENT_INSTANCE/LoginName)[1]',        'sysname'),
+        @eventdata.value('(/EVENT_INSTANCE/SchemaName)[1]',       'sysname'),
+        @eventdata.value('(/EVENT_INSTANCE/ObjectName)[1]',       'sysname'),
+        @eventdata.value('(/EVENT_INSTANCE/TargetObjectName)[1]', 'sysname'),
+        @eventdata);
+````
+
+### Error Handling
+
+`TRY` ... `CATCH`
+
+If a `TRY` ... `CATCH` block captures and handles an error, as far as the caller is concerned, there was no error.
+
+SQL Server gives you information about the error via a set of functions. The `ERROR_NUMBER()` function returns an integer with the number of the error. The `CATCH` block usually includes flow code that inspects the error number to determine what course of action to take. The `ERROR_MESSAGE()` function returns error-message text. To get the list of error numbers and messages, query the `sys.messages` catalog view. The `ERROR_SEVERITY()` and `ERROR_STAT()` functions return the error severity and state. The `ERROR_LINE()` function returns the line number in the code where the error happened. Finally, the `ERROR_PROCEDURE()` function returns the name of the procedure in which the error happened and returns `NULL` if the error did not happen within a procedure.
+
+````sql
+BEGIN TRY
+
+	INSERT INTO dbo.Employees(empid, empname, mgrid)
+    	VALUES(1, 'Emp1', NULL);
+	-- Also try with empid = 0, 'A', NULL
+
+END TRY
+BEGIN CATCH
+
+	IF ERROR_NUMBER() = 2627
+    BEGIN
+    	PRINT '    Handling PK violation...';
+	END;
+    ELSE IF ERROR_NUMBER() = 547
+    BEGIN
+    	PRINT '    Handling CHECK/FK constraint violation...';
+	END;
+	ELSE IF ERROR_NUMBER() = 515
+    BEGIN
+    	PRINT '    Handling NULL violation...';
+	END;
+    ELSE IF ERROR_NUMBER() = 245
+    BEGIN
+    	PRINT '    Handling conversion error...';
+	END;
+    ELSE
+    BEGIN
+    	PRINT 'Re-throwing error...';
+		THROW;
+	END;
+
+	PRINT '    Error Number  : ' + CAST(ERROR_NUMBER() AS VARCHAR(10));
+	PRINT '    Error Message : ' + ERROR_MESSAGE();
+	PRINT '    Error Severity: ' + CAST(ERROR_SEVERITY() AS VARCHAR(10));
+	PRINT '    Error State   : ' + CAST(ERROR_STATE() AS VARCHAR(10));
+	PRINT '    Error Line    : ' + CAST(ERROR_LINE() AS VARCHAR(10));
+	PRINT '    Error Proc    : ' + COALESCE(ERROR_PROCEDURE(), 'Not within proc');
+
+END CATCH;
+
+-- (1 row(s) affected)
+-- Handling PK violation...
+-- Error Number  : 2627
+-- Error Message : Violation of PRIMARY KEY constraint 'PK_Employees'. Cannot insert duplicatekey
+-- in object 'dbo.Employees'.
+-- Error Severity: 14Error State   : 1
+-- Error Line    : 3
+-- Error Proc    : Not within proc
+````
