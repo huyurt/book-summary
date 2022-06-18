@@ -5512,9 +5512,9 @@ END CATCH;
 -- (1 row(s) affected)
 -- Handling PK violation...
 -- Error Number  : 2627
--- Error Message : Violation of PRIMARY KEY constraint 'PK_Employees'. Cannot insert duplicatekey
--- in object 'dbo.Employees'.
--- Error Severity: 14Error State   : 1
+-- Error Message : Violation of PRIMARY KEY constraint 'PK_Employees'. Cannot insert duplicate key in object 'dbo.Employees'.
+-- Error Severity: 14
+-- Error State   : 1
 -- Error Line    : 3
 -- Error Proc    : Not within proc
 ````
