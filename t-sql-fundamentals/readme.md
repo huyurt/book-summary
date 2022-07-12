@@ -1,6 +1,6 @@
 ![cover](images/cover.jpg)
 
-# Notes of T-SQL Fundamentals
+# Notes of T-SQL Fundamentals (3rd Edition)
 
 
 ## 1. Background to T-SQL Querying and Programming
