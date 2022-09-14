@@ -1,5 +1,3 @@
-![cover](images/cover.jpg)
-
 # Notes of T-SQL Fundamentals (3rd Edition)
 
 
