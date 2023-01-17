@@ -8,3 +8,5 @@
 
 - [Metadata](metadata.md)
 
+- [Elasticsearch Observability](elasticsearch-observability.md)
+
