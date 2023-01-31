@@ -64,6 +64,14 @@ https://www.elastic.co/beats/
 
 
 
+### Fleet Server
+
+Agent policy'lerini güncellemek, durum bilgilerini toplamak ve Elastic Agent'ların genelinde eylemleri koordine etmek için kontrolcü görevi görür. Bu sayede ölçeklenebilir bir mimari sağlar. Fleet server'lar dağıtık olarak konumlandırılabilir.
+
+
+
+<img style="float: left; zoom: 75%;" src="elasticsearch-observability/images/10_fleet_server_1.png">
+
 
 
 ### Observability
@@ -86,9 +94,9 @@ Elde edilenler:
 
 #### Logs
 
-Kibana'daki Log uygulaması, Elasticsearch'e alınan tüm log'ları aramaya, filtrelemeye ve takip etmeye olanak tanır. Farklı sunucularda oturum açmak, dizinleri değiştirmek ve tek tek dosyaları takip etmek yerine tüm log'ları bir araya getirir.
+Elasticsearch'e alınan tüm log'ları aramaya, filtrelemeye ve takip etmeye olanak tanır. Farklı sunucularda oturum açmak, dizinleri değiştirmek ve tek tek dosyaları takip etmek yerine tüm log'ları bir araya getirir.
 
-Log'ların canlı akışı autocomplete'i kullanarak filtreleme ve hızlı gezinme için histogramı vardır. Belirli log anormalliklerini otomatik olarak algılamak ve günlük log'lardaki kalıpları hızlı bir şekilde belirlemek için log mesajlarını kategorilere ayırmaya yarayan makine öğrenimi de kullanılabilir.
+Log anormalliklerini otomatik olarak algılamak ve günlük log'lardaki kalıpları hızlı bir şekilde belirlemek için log mesajlarını kategorilere ayırmaya yarayan makine öğrenimi de kullanılabilir.
 
 
 
@@ -98,7 +106,7 @@ Log'ların canlı akışı autocomplete'i kullanarak filtreleme ve hızlı gezin
 
 #### Metrics
 
-Kibana'daki Metrics uygulaması, altyapı metric'lerini görselleştirerek sorunlu artışları teşhis etmeye, yüksek kaynak kullanımını belirlemeye, bölmeleri otomatik olarak keşfetmeye, izlemeye ve metrikleri Elasticsearch'teki log'lar ve APM verileriyle birleştirmeye olanak tanır.
+Altyapı metric'lerini görselleştirerek sorunlu artışları teşhis etmeye, yüksek kaynak kullanımını belirlemeye, bölmeleri otomatik olarak keşfetmeye, izlemeye ve metrikleri Elasticsearch'teki log'lar ve APM verileriyle birleştirmeye olanak tanır.
 
 
 
@@ -108,7 +116,7 @@ Kibana'daki Metrics uygulaması, altyapı metric'lerini görselleştirerek sorun
 
 #### Uptime
 
-Kibana'daki Uptime uygulaması, uygulama ve hizmetlerin kullanılabilirliğini ve yanıt sürelerini gerçek zamanlı olarak izlemeye ve sorunları, kullanıcıları etkilemeden önce tespit etmeyi sağlar. Network endpoint'lerin durumunu HTTP/S, TCP ve ICMP aracılığıyla izleyebilir, endpoint durumunu zaman içinde keşfedebilir, belirli monitörlerde detaya inebilir ve herhangi bir zamanda ortamı üst düzey anlık görüntüsünü görüntüleyebilir.
+Uygulama ve hizmetlerin kullanılabilirliğini ve yanıt sürelerini gerçek zamanlı olarak izlemeye ve sorunları, kullanıcıları etkilemeden önce tespit etmeyi sağlar. Network endpoint'lerin durumunu HTTP/S, TCP ve ICMP aracılığıyla izleyebilir, endpoint durumunu zaman içinde keşfedebilir, belirli monitörlerde detaya inebilir ve herhangi bir zamanda ortamı üst düzey anlık görüntüsünü görüntüleyebilir.
 
 
 
@@ -118,7 +126,7 @@ Kibana'daki Uptime uygulaması, uygulama ve hizmetlerin kullanılabilirliğini v
 
 #### APM
 
-Kibana'daki APM uygulaması, yazılım hizmetlerini ve uygulamaları gerçek zamanlı olarak izlemeye, işlenmeyen hataları ve istisnaları toplamaya ve ana bilgisayar düzeyinde temel ölçümleri otomatik olarak almaya olanak tanır.
+Yazılım hizmetlerini ve uygulamaları gerçek zamanlı olarak izlemeye, işlenmeyen hataları ve istisnaları toplamaya ve ana bilgisayar düzeyinde temel ölçümleri otomatik olarak almaya olanak tanır.
 
 
 
@@ -126,17 +134,7 @@ Kibana'daki APM uygulaması, yazılım hizmetlerini ve uygulamaları gerçek zam
 
 
 
-
-
-
-
-
-
-
-
-
-
-### Application Performance Monitoring (APM)
+##### Application Performance Monitoring (APM)
 
 Microservice/monolith mimarilerde sorunun asıl nedenini trace'ler, log'lar ve metric'ler ile tespit eder.
 
@@ -162,7 +160,7 @@ Microservice/monolith mimarilerde sorunun asıl nedenini trace'ler, log'lar ve m
 
 
 
-### Log Monitoring
+###### Log Monitoring
 
 Farklı kaynaklardan gelen log'ları dönüştürüp görüntülenmesini sağlar.
 
@@ -176,7 +174,7 @@ Farklı kaynaklardan gelen log'ları dönüştürüp görüntülenmesini sağlar
 
 
 
-### Infrastructure Monitoring
+###### Infrastructure Monitoring
 
 AWS, Microsoft Azure, Google Cloud, Azure, GCP, Kafka ve NGINX gibi platformlar dahil olmak üzere 200'den fazla entegrasyon desteğiyle altyapıyı izler. 
 
@@ -194,7 +192,7 @@ AWS, Microsoft Azure, Google Cloud, Azure, GCP, Kafka ve NGINX gibi platformlar 
 
 
 
-### Real User Monitoring
+###### Real User Monitoring
 
 Uygulamanın end-user sistemlerinde nasıl performans gösterdiğini anlamak için verileri URL'e, işletim sistemine, tarayıcıya ve konuma göre analiz eder.
 
@@ -212,7 +210,7 @@ Uygulamanın end-user sistemlerinde nasıl performans gösterdiğini anlamak iç
 
 
 
-### Synthetic Monitoring
+###### Synthetic Monitoring
 
 Web site performansına ve kullanılabilirliğine ilişkin sorunları önceden yakalar.
 
@@ -234,7 +232,7 @@ Web site performansına ve kullanılabilirliğine ilişkin sorunları önceden y
 
 
 
-### Universal Profiling
+###### Universal Profiling
 
 Sistem performansını analiz etmeye yarar.
 
