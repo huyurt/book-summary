@@ -72,16 +72,17 @@ public abstract class Duck {
         System.out.println("All ducks float, even decoys!");
     }
     
-    public void setFlyBehavior(FlyBehavior fb) {
+    public void setFlyBehavior(IFlyBehavior fb) {
         flyBehavior = fb;
     }
     
-    public void setQuackBehavior(QuackBehavior qb) {
+    public void setQuackBehavior(IQuackBehavior qb) {
         quackBehavior = qb;
     }
 }
+````
 
-///////////////////////////////////////
+````c#
 public interface IFlyBehavior {
     public void fly();
 }
@@ -103,8 +104,9 @@ public class FlyRocketPowered : IFlyBehavior {
         System.out.println("I'm flying with a rocket!");
     }
 }
+````
 
-///////////////////////////////////////
+````c#
 public interface IQuackBehavior {
     public void quack();
 }
@@ -126,8 +128,9 @@ public class Squeak : IQuackBehavior {
         System.out.println("Squeak");
     }
 }
+````
 
-///////////////////////////////////////
+````c#
 public class MallardDuck : Duck {
     public MallardDuck() {
         quackBehavior = new Quack();
@@ -148,8 +151,9 @@ public class ModelDuck : Duck {
         System.out.println("I'm a model duck");
     }
 }
+````
 
-///////////////////////////////////////
+````c#
 public class MiniDuckSimulator {
     public static void main(String[] args) {
         Duck mallard = new MallardDuck();
