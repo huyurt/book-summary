@@ -310,3 +310,41 @@ There are classes for game characters along with classes for weapon behaviors th
 
 
 ### Observer Pattern (Weather Monitoring App)
+
+The system has three components: the weather station (the physical device that acquires the actual weather data), the WeatherData object (that tracks the data coming from the Weather Station and updates the displays), and the display that shows users the current weather conditions.
+
+
+
+
+![](./diagrams/svg/02_01_weather_monitoring_app.drawio.svg)
+
+
+
+````c#
+// misguided implementation of the Weather Station
+public class WeatherData
+{
+    // instance variable declarations
+    public void measurementsChanged()
+    {
+        float temp = getTemperature();
+        float humidity = getHumidity();
+        float pressure = getPressure();
+        
+        currentConditionsDisplay.update(temp, humidity, pressure);
+        statisticsDisplay.update(temp, humidity, pressure);
+        forecastDisplay.update(temp, humidity, pressure);
+    }
+    
+    // other WeatherData methods here
+}
+````
+
+
+
+#### Meet the Observer Pattern
+
+1. A newspaper publisher begins publishing newspapers.
+2. You subscribe to a particular publisher, and every time there’s a new edition it gets delivered to you.
+3. You unsubscribe when you don’t want newspapers anymore, and they stop being delivered.
+4. People, hotels, airlines, and other businesses constantly subscribe and unsubscribe to the newspaper.
