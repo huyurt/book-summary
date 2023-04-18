@@ -192,98 +192,102 @@ OO Basic
 
 * Abstraction
 
-  * Data abstraction is the process of hiding certain details and showing only essential information to the user. Abstraction can be achieved with either abstract classes or interfaces.
+  Data abstraction is the process of hiding certain details and showing only essential information to the user. Abstraction can be achieved with either abstract classes or interfaces.
 
-    ````c#
-    // Abstract class
-    abstract class Animal
+  ````c#
+  // Abstract class
+  abstract class Animal
+  {
+    // Abstract method (does not have a body)
+    public abstract void animalSound();
+    // Regular method
+    public void sleep()
     {
-      // Abstract method (does not have a body)
-      public abstract void animalSound();
-      // Regular method
-      public void sleep()
-      {
-        Console.WriteLine("Zzz");
-      }
+      Console.WriteLine("Zzz");
     }
-    
-    // Derived class (inherit from Animal)
-    class Cat : Animal
+  }
+  
+  // Derived class (inherit from Animal)
+  class Cat : Animal
+  {
+    public override void animalSound()
     {
-      public override void animalSound()
-      {
-        // The body of animalSound() is provided here
-        Console.WriteLine("The cat says: meow meow");
-      }
+      // The body of animalSound() is provided here
+      Console.WriteLine("The cat says: meow meow");
     }
+  }
+  ````
 
 * Encapsulation
 
-  * Encapsulation is the concept of wrapping data into a single unit. It collects data members and member functions into a single unit called class. The purpose of encapsulation is to prevent alteration of data from outside. This data can only be accessed by getter functions of the class.
+  Encapsulation is the concept of wrapping data into a single unit. It collects data members and member functions into a single unit called class. The purpose of encapsulation is to prevent alteration of data from outside. This data can only be accessed by getter functions of the class.
 
-    A fully encapsulated class has getter and setter functions that are used to read and write data. This class does not allow data access directly.
+  A fully encapsulated class has getter and setter functions that are used to read and write data. This class does not allow data access directly.
 
-    ````c#
-    namespace AccessSpecifiers
-    {
-        class Student
-        {
-            public string Id { get; set; }
-            public string Name { get; set; }
-            public string Email { get; set; }  
-        }
-    }
+  ````c#
+  namespace AccessSpecifiers
+  {
+      class Student
+      {
+          public string Id { get; set; }
+          public string Name { get; set; }
+          public string Email { get; set; }  
+      }
+  }
+  ````
 
 * Polymorphism
 
-  * Polymorphism means "many forms", and it occurs when we have many classes that are related to each other by inheritance.
+  Polymorphism means "many forms", and it occurs when we have many classes that are related to each other by inheritance.
 
-    ````c#
-    class Animal  // Base class (parent)
+  ````c#
+  class Animal  // Base class (parent)
+  {
+    public virtual void animalSound()
     {
-      public virtual void animalSound()
-      {
-        Console.WriteLine("The animal makes a sound");
-      }
+      Console.WriteLine("The animal makes a sound");
     }
-    
-    class Cat : Animal  // Derived class (child)
+  }
+  
+  class Cat : Animal  // Derived class (child)
+  {
+    public override void animalSound()
     {
-      public override void animalSound()
-      {
-        Console.WriteLine("The cat says: meow meow");
-      }
+      Console.WriteLine("The cat says: meow meow");
     }
-    
-    class Dog : Animal  // Derived class (child)
+  }
+  
+  class Dog : Animal  // Derived class (child)
+  {
+    public override void animalSound()
     {
-      public override void animalSound()
-      {
-        Console.WriteLine("The dog says: bow wow");
-      }
+      Console.WriteLine("The dog says: bow wow");
     }
+  }
+  ````
 
 * Inheritance
 
-  * Inherit fields and methods from one class to another. The "inheritance concept" into two categories:
+  Inherit fields and methods from one class to another. The "inheritance concept" into two categories:
 
-    * Derived Class (child) - the class that inherits from another class
-    * Base Class (parent) - the class being inherited from
+  * Derived Class (child) - the class that inherits from another class
+  * Base Class (parent) - the class being inherited from
 
-    ````c#
-    class Vehicle  // base class (parent)
+  ````c#
+  class Vehicle  // base class (parent)
+  {
+    public string brand = "Ford";  // Vehicle field
+    public void honk()             // Vehicle method
     {
-      public string brand = "Ford";  // Vehicle field
-      public void honk()             // Vehicle method
-      {
-        Console.WriteLine("Tuut, tuut!");
-      }
+      Console.WriteLine("Tuut, tuut!");
     }
-    
-    class Car : Vehicle  // derived class (child)
-    {
-      public string modelName = "Mustang";  // Car field
-    }
+  }
+  
+  class Car : Vehicle  // derived class (child)
+  {
+    public string modelName = "Mustang";  // Car field
+  }
+  ````
 
 OO Principle
 
@@ -320,8 +324,9 @@ The system has three components: the weather station (the physical device that a
 
 
 
+Misguided implementation of the Weather Station:
+
 ````c#
-// misguided implementation of the Weather Station
 public class WeatherData
 {
     // instance variable declarations
@@ -348,3 +353,30 @@ public class WeatherData
 2. You subscribe to a particular publisher, and every time there’s a new edition it gets delivered to you.
 3. You unsubscribe when you don’t want newspapers anymore, and they stop being delivered.
 4. People, hotels, airlines, and other businesses constantly subscribe and unsubscribe to the newspaper.
+
+The Observer Pattern defines a one-to-many dependency between objects so that when one object changes state, all of its dependents are notified and updated automatically.
+
+
+
+
+![](./diagrams/svg/02_02_observer_pattern.drawio.svg)
+
+
+
+##### The Power of Loose Coupling
+
+> Strive for loosely coupled designs between objects that interact.
+
+Loosely coupled designs allow us to build flexible systems because they minimize the interdependency between objects.
+
+
+
+#### Designing the Weather Station
+
+
+
+
+![](./diagrams/svg/02_03_weather_monitoring_observer_pattern.drawio.svg)
+
+
+
