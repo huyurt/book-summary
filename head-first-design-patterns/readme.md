@@ -52,117 +52,147 @@ Here’s the key: A Duck will now delegate its flying and quacking behaviors, in
 
 
 ````c#
-public abstract class Duck {
+public abstract class Duck
+{
     IFlyBehavior flyBehavior;
     IQuackBehavior quackBehavior;
     
     public Duck() {}
     
-    public abstract void display();
+    public abstract void Display();
     
-    public void performFly() {
-        flyBehavior.fly();
+    public void PerformFly()
+    {
+        flyBehavior.Fly();
     }
     
-    public void performQuack() {
-        quackBehavior.quack();
+    public void PerformQuack()
+    {
+        quackBehavior.Quack();
     }
     
-    public void swim() {
-        System.out.println("All ducks float, even decoys!");
+    public void Swim()
+    {
+        Console.WriteLine("All ducks float, even decoys!");
     }
     
-    public void setFlyBehavior(IFlyBehavior fb) {
+    public void SetFlyBehavior(IFlyBehavior fb)
+    {
         flyBehavior = fb;
     }
     
-    public void setQuackBehavior(IQuackBehavior qb) {
+    public void SetQuackBehavior(IQuackBehavior qb)
+    {
         quackBehavior = qb;
     }
 }
 ````
 
 ````c#
-public interface IFlyBehavior {
-    public void fly();
+public interface IFlyBehavior
+{
+    void Fly();
 }
 
-public class FlyWithWings : IFlyBehavior {
-    public void fly() {
-        System.out.println("I'm flying!!");
+public class FlyWithWings : IFlyBehavior
+{
+    public void Fly()
+    {
+        Console.WriteLine("I'm flying!!");
     }
 }
 
-public class FlyNoWay : IFlyBehavior {
-    public void fly() {
-        System.out.println("I can't fly");
+public class FlyNoWay : IFlyBehavior
+{
+    public void Fly()
+    {
+        Console.WriteLine("I can't fly");
     }
 }
 
-public class FlyRocketPowered : IFlyBehavior {
-    public void fly() {
-        System.out.println("I'm flying with a rocket!");
-    }
-}
-````
-
-````c#
-public interface IQuackBehavior {
-    public void quack();
-}
-
-public class Quack : IQuackBehavior {
-    public void quack() {
-        System.out.println("Quack");
-    }
-}
-
-public class MuteQuack : IQuackBehavior {
-    public void quack() {
-        System.out.println("<< Silence >>");
-    }
-}
-
-public class Squeak : IQuackBehavior {
-    public void quack() {
-        System.out.println("Squeak");
+public class FlyRocketPowered : IFlyBehavior
+{
+    public void Fly()
+    {
+        Console.WriteLine("I'm flying with a rocket!");
     }
 }
 ````
 
 ````c#
-public class MallardDuck : Duck {
-    public MallardDuck() {
+public interface IQuackBehavior
+{
+    void Quack();
+}
+
+public class Quack : IQuackBehavior
+{
+    public void Quack()
+    {
+        Console.WriteLine("Quack");
+    }
+}
+
+public class MuteQuack : IQuackBehavior
+{
+    public void Quack()
+    {
+        Console.WriteLine("<< Silence >>");
+    }
+}
+
+public class Squeak : IQuackBehavior
+{
+    public void Quack()
+    {
+        Console.WriteLine("Squeak");
+    }
+}
+````
+
+````c#
+public class MallardDuck : Duck
+{
+    public MallardDuck()
+    {
         quackBehavior = new Quack();
         flyBehavior = new FlyWithWings();
     }
     
-    public void display() {
-        System.out.println("I'm a real Mallard duck");
+    public void Display()
+    {
+        Console.WriteLine("I'm a real Mallard duck");
     }
 }
 
-public class ModelDuck : Duck {
-    public ModelDuck() {
+public class ModelDuck : Duck
+{
+    public ModelDuck()
+    {
         flyBehavior = new FlyNoWay();
         quackBehavior = new Quack();
     }
-    public void display() {
-        System.out.println("I'm a model duck");
+    
+    public void Display()
+    {
+        Console.WriteLine("I'm a model duck");
     }
 }
 ````
 
 ````c#
-public class MiniDuckSimulator {
-    public static void main(String[] args) {
+public class MiniDuckSimulator
+{
+    static void Main(string[] args)
+    {
         Duck mallard = new MallardDuck();
-        mallard.performQuack();
-        mallard.performFly();
+        mallard.PerformQuack();
+        mallard.PerformFly();
+
         Duck model = new ModelDuck();
-        model.performFly();
-        model.setFlyBehavior(new FlyRocketPowered());
-        model.performFly();
+        model.PerformFly();
+        model.SetFlyBehavior(new FlyRocketPowered());
+        model.PerformFly();
     }
 }
 ````
@@ -198,23 +228,23 @@ OO Basic
   // Abstract class
   abstract class Animal
   {
-    // Abstract method (does not have a body)
-    public abstract void animalSound();
-    // Regular method
-    public void sleep()
-    {
-      Console.WriteLine("Zzz");
-    }
+      // Abstract method (does not have a body)
+      public abstract void AnimalSound();
+      // Regular method
+      public void Sleep()
+      {
+          Console.WriteLine("Zzz");
+      }
   }
   
   // Derived class (inherit from Animal)
   class Cat : Animal
   {
-    public override void animalSound()
-    {
-      // The body of animalSound() is provided here
-      Console.WriteLine("The cat says: meow meow");
-    }
+      public override void AnimalSound()
+      {
+          // The body of animalSound() is provided here
+          Console.WriteLine("The cat says: meow meow");
+      }
   }
   ````
 
@@ -243,26 +273,26 @@ OO Basic
   ````c#
   class Animal  // Base class (parent)
   {
-    public virtual void animalSound()
-    {
-      Console.WriteLine("The animal makes a sound");
-    }
+      public virtual void AnimalSound()
+      {
+          Console.WriteLine("The animal makes a sound");
+      }
   }
   
   class Cat : Animal  // Derived class (child)
   {
-    public override void animalSound()
-    {
-      Console.WriteLine("The cat says: meow meow");
-    }
+      public override void AnimalSound()
+      {
+          Console.WriteLine("The cat says: meow meow");
+      }
   }
   
   class Dog : Animal  // Derived class (child)
   {
-    public override void animalSound()
-    {
-      Console.WriteLine("The dog says: bow wow");
-    }
+      public override void AnimalSound()
+      {
+          Console.WriteLine("The dog says: bow wow");
+      }
   }
   ````
 
@@ -276,16 +306,16 @@ OO Basic
   ````c#
   class Vehicle  // base class (parent)
   {
-    public string brand = "Ford";  // Vehicle field
-    public void honk()             // Vehicle method
-    {
-      Console.WriteLine("Tuut, tuut!");
-    }
+      public string brand = "Ford";  // Vehicle field
+      public void Honk()             // Vehicle method
+      {
+          Console.WriteLine("Tuut, tuut!");
+      }
   }
   
   class Car : Vehicle  // derived class (child)
   {
-    public string modelName = "Mustang";  // Car field
+      public string modelName = "Mustang";  // Car field
   }
   ````
 
@@ -330,15 +360,15 @@ Misguided implementation of the Weather Station:
 public class WeatherData
 {
     // instance variable declarations
-    public void measurementsChanged()
+    public void MeasurementsChanged()
     {
-        float temp = getTemperature();
-        float humidity = getHumidity();
-        float pressure = getPressure();
+        float temp = GetTemperature();
+        float humidity = GetHumidity();
+        float pressure = GetPressure();
         
-        currentConditionsDisplay.update(temp, humidity, pressure);
-        statisticsDisplay.update(temp, humidity, pressure);
-        forecastDisplay.update(temp, humidity, pressure);
+        currentConditionsDisplay.Update(temp, humidity, pressure);
+        statisticsDisplay.Update(temp, humidity, pressure);
+        forecastDisplay.Update(temp, humidity, pressure);
     }
     
     // other WeatherData methods here
@@ -380,3 +410,114 @@ Loosely coupled designs allow us to build flexible systems because they minimize
 
 
 
+````c#
+public interface ISubject
+{
+    void RegisterObserver(Observer o);
+    void RemoveObserver(Observer o);
+    void NotifyObservers();
+}
+
+public interface IObserver
+{
+    void Update(float temperature, float humidity, float pressure);
+}
+
+public interface IDisplayElement
+{
+    void Display();
+}
+````
+
+````c#
+public class WeatherData : ISubject
+{
+    private List<Observer> observers;
+    private float temperature;
+    private float humidity;
+    private float pressure;
+    
+    public WeatherData()
+    {
+        observers = new List<Observer>();
+    }
+    
+    public void RegisterObserver(Observer o)
+    {
+        observers.Add(o);
+    }
+    
+    public void RemoveObserver(Observer o)
+    {
+        observer.Remove(o);
+    }
+    
+    public void NotifyObservers()
+    {
+        foreach(Observer observer in observers)
+        {
+            observer.Update(temp, humidity, pressure);
+        }
+    }
+    
+    public void MeasurementsChanged()
+    {
+        NotifyObservers();
+    }
+    
+    public void SetMeasurements(float temperature, float humidity, float pressure)
+    {
+        this.temperature = temperature;
+        this.humidity = humidity;
+        this.pressure = pressure;
+        MeasurementsChanged();
+    }
+    
+    // other WeatherData methods here
+}
+````
+
+````c#
+public class CurrentConditionsDisplay : IObserver, IDisplayElement
+{
+    private float temperature;
+    private float humadity;
+    private WeatherData weatherData;
+    
+    public CurrentConditionsDisplay(WeatherData weatherData)
+    {
+        this.weatherData = weatherData;
+        weatherData.RegisterObserver(this);
+    }
+    
+    public void Update(float temperature, float humidity, float pressure)
+    {
+        this.temperature = temperature;
+        this.humidity = humidity;
+        Display();
+    }
+    
+    public void Display()
+    {
+        Console.WriteLine("Current conditions: " + temperature + "C degrees and " + humidity + "% humidity");
+    }
+}
+````
+
+````c#
+public class WeatherStation
+{
+    static void Main(string[] args)
+    {
+        WeatherData weatherData = new WeatherData();
+        
+        CurrentConditionsDisplay currentDisplay = new CurrentConditionsDisplay(weatherData);
+        StatisticsDisplay statisticsDisplay = new StatisticsDisplay(weatherData);
+        ForecastDisplay forecastDisplay = new ForecastDisplay(weatherData);
+        
+        weatherData.setMeasurements(80, 65, 30.4f);
+        weatherData.setMeasurements(82, 70, 29.2f);
+        weatherData.setMeasurements(78, 90, 29.2f);
+    }
+}
+````
