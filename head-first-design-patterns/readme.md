@@ -521,3 +521,55 @@ public class WeatherStation
     }
 }
 ````
+
+
+
+* The Observer Pattern defines a one-to-many relationship between objects.
+* Subjects update Observers using a common interface.
+* Observers of any concrete type can participate in the pattern as long as they implement the Observer interface.
+* Observers are loosely coupled in that the Subject knows nothing about them, other than that they implement the Observer interface.
+* You can push or pull data from the Subject when using the pattern (pull is considered more "correct").
+* The Observer Pattern is related to the Publish/Subscribe Pattern, which is for more complex situations with multiple Subjects and/or multiple message types.
+
+
+
+OO Principles
+
+* Strive for loosely coupled designs between objects that interact.
+
+OO Patterns
+
+* Observer - defines a one-to-many dependency between objects so that when one object changes state, all its dependents are notified and updated automatically.
+
+
+
+
+
+### Decorator Pattern (Coffee Shop)
+
+The coffee shop has grown so quickly, they are scrambling to update their ordering systems to match their beverage offerings.
+
+When they first went into business they designed their classes like this...
+
+In addition to coffee, you can also ask for several condiments like steamed milk, soy, and mocha, and have it all topped off with whipped
+milk. The coffee shop charges for each condiment.
+
+
+
+![](./diagrams/svg/03_01_coffee_shop_first_class_design.drawio.svg)
+
+
+
+First improvement is below. What requirements or other factors might change that will impact this design?
+
+- Price changes for condiments will force us to alter existing code.
+- New condiments will force us to add new methods and alter the cost method in the superclass.
+- We may have new beverages. For some of these beverages (iced tea?), the condiments may not be appropriate, yet the Tea subclass will still inherit methods like hasWhip().
+- What if a customer wants a double mocha?
+
+
+
+![](./diagrams/svg/03_02_coffee_shop_class_design_improvement.drawio.svg)
+
+
+
