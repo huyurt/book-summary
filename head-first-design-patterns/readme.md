@@ -573,3 +573,38 @@ First improvement is below. What requirements or other factors might change that
 
 
 
+#### The Open-Closed Principle
+
+> Classes should be open for extension, but closed for modification.
+
+* Come on in; we’re *open*. Feel free to extend our classes with any new behavior you like. If your needs or requirements change, just go ahead and make your own extensions.
+* Sorry, we’re *closed*. We spent a lot of time getting this code correct and bug free, so we can’t let you alter the existing code. It must remain closed to modification. If you don’t like it, you can speak to the manager.
+
+Allow classes to be easily extended to incorporate new behavior without modifying existing code.
+
+
+
+#### Meet the Decorator Pattern
+
+We’ve seen that representing beverage and condiments with inheritance has not worked out very well. We get class explosions and rigid designs, or we add functionality to the base class that isn’t appropriate for some of the subclasses.
+
+We will start with a beverage and decorate it with the condiments at runtime. For example, if the customer wants a Dark Roast with Mocha and Whip, then we will:
+
+1. Start with a DarkRoast object.
+2. Decorate it with a Mocha object.
+3. Decorate it with a Whip object.
+4. Call the cost() method and rely on delegation to add up the condiment costs.
+
+Think of decorator objects as *wrappers*.
+
+
+
+![](./diagrams/svg/03_03_coffee_shop_object_wrapping.drawio.svg)
+
+
+
+* Decorators have the same supertype as the objects they decorate.
+* You can use one or more decorators to wrap an object.
+* Given that the decorator has the same supertype as the object it decorates, we can pass around a decorated object in place of the original (wrapped) object.
+* The decorator adds its own behavior before and/or after delegating to the object it decorates to do the rest of the job.
+* Objects can be decorated at any time, so we can decorate objects dynamically at runtime with as many decorators as we like.
