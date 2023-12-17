@@ -377,7 +377,7 @@ public class WeatherData
 
 
 
-#### Meet the Observer Pattern
+#### Observer Pattern
 
 1. A newspaper publisher begins publishing newspapers.
 2. You subscribe to a particular publisher, and every time there’s a new edition it gets delivered to you.
@@ -393,7 +393,7 @@ The Observer Pattern defines a one-to-many dependency between objects so that wh
 
 
 
-##### The Power of Loose Coupling
+##### Loose Coupling
 
 > Strive for loosely coupled designs between objects that interact.
 
@@ -584,9 +584,9 @@ Allow classes to be easily extended to incorporate new behavior without modifyin
 
 
 
-#### Meet the Decorator Pattern
+#### Decorator Pattern
 
-We’ve seen that representing beverage and condiments with inheritance has not worked out very well. We get class explosions and rigid designs, or we add functionality to the base class that isn’t appropriate for some of the subclasses.
+We have seen that representing beverage and condiments with inheritance has not worked out very well. We get class explosions and rigid designs, or we add functionality to the base class that isn’t appropriate for some of the subclasses.
 
 We will start with a beverage and decorate it with the condiments at runtime. For example, if the customer wants a Dark Roast with Mocha and Whip, then we will:
 
@@ -608,3 +608,148 @@ Think of decorator objects as *wrappers*.
 * Given that the decorator has the same supertype as the object it decorates, we can pass around a decorated object in place of the original (wrapped) object.
 * The decorator adds its own behavior before and/or after delegating to the object it decorates to do the rest of the job.
 * Objects can be decorated at any time, so we can decorate objects dynamically at runtime with as many decorators as we like.
+
+Decorator Pattern attaches additional responsibilities to an object dynamically. Decorators provide a flexible alternative to subclassing for extending functionality.
+
+
+
+![](./diagrams/svg/03_04_decorator_pattern.drawio.svg)
+
+
+
+#### Designing Beverages
+
+
+
+![](./diagrams/svg/03_05_coffees_decorator_pattern.drawio.svg)
+
+
+
+````c#
+public abstract class Beverage
+{
+    private protected string description = "Unknown Beverage";
+    
+    public virtual string GetDescription()
+    {
+        return description;
+    }
+    
+    public abstract decimal Cost();
+}
+
+public abstract class CondimentDecorator : Beverage
+{
+    private protected Beverage beverage;
+    
+    public abstract override string GetDescription();
+}
+````
+
+````C#
+public class Espresso : Beverage
+{
+    public Espresso()
+    {
+        description = "Espresso";
+    }
+    
+    public override decimal Cost()
+    {
+        return 1.99M;
+    }
+}
+
+public class HouseBlend : Beverage
+{
+    public HouseBlend()
+    {
+        description = "House Blend Coffee";
+    }
+    
+    public override decimal Cost()
+    {
+        return .89M;
+    }
+}
+````
+
+````c#
+public class Mocha : CondimentDecorator
+{
+    public Mocha(Beverage beverage)
+    {
+        this.beverage = beverage;
+    }
+    
+    public override string GetDescription()
+    {
+        return beverage.GetDescription() + ", Mocha";
+    }
+    
+    public override decimal Cost()
+    {
+        return beverage.Cost() + .20M;
+    }
+}
+
+public class Whip : CondimentDecorator
+{
+    public Mocha(Beverage beverage)
+    {
+        this.beverage = beverage;
+    }
+    
+    public override string GetDescription()
+    {
+        return beverage.GetDescription() + ", Whip";
+    }
+    
+    public override decimal Cost()
+    {
+        return beverage.Cost() + .10M;
+    }
+}
+````
+
+````c#
+public class CoffeeShop
+{
+    static void Main(string[] args)
+    {
+        Beverage beverage = new Espresso();
+        beverage = new Mocha(beverage);
+        beverage = new Mocha(beverage);
+        beverage = new Whip(beverage);
+        
+        Console.Write($"{beverage.GetDescription()} ${beverage.Cost()}"); // Espresso, Mocha, Mocha, Whip $2,49
+    }
+}
+````
+
+
+
+* Inheritance is one form of extension, but not necessarily the best way to achieve flexibility in our designs.
+* In our designs we should allow behavior to be extended without
+  the need to modify existing code.
+* Composition and delegation can often be used to add new
+  behaviors at runtime.
+* The Decorator Pattern provides an alternative to subclassing for
+  extending behavior.
+* The Decorator Pattern involves a set of decorator classes that are used to wrap concrete components.
+* Decorator classes mirror the type of the components they decorate.
+* Decorators change the behavior of their components by adding new functionality before and/or after (or even in place of) method calls to the component.
+* You can wrap a component with any number of decorators.
+* Decorators are typically transparent to the client of the component, unless the client is relying on the component’s concrete type.
+* Decorators can result in many small objects in our design, and overuse can be complex.
+
+
+
+OO Principles
+
+* Classes should be open for extension but closed for modification.
+
+OO Patterns
+
+* Decorator - Attach additional responsibilities to an object dynamically. Decorators provide a flexible alternative to subclassing for extending functionality.
+
