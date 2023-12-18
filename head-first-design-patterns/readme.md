@@ -1,10 +1,8 @@
 # Notes of Head First Design Patterns (2nd Edition)
 
-## 1. Welcome To Design Patterns
-
 > Someone has already solved your problems.
 
-### Strategy Pattern (SimUDuck App)
+## Strategy Pattern (SimUDuck App)
 
 SimUDuck is a duck pond game. The game can show a large variety of duck species swimming and making quacking sounds. The game has built with standard OO techniques and created one Duck superclass from which all other duck types inherit.
 
@@ -36,7 +34,7 @@ One of the secrets to creating maintainable OO systems is thinking about how the
 
 
 
-#### Designing Behaviors
+### Designing Behaviors
 
 > Program to an interface, not an implementation.
 
@@ -331,7 +329,7 @@ OO Patterns
 
 
 
-#### Exercises
+### Exercises
 
 There are classes for game characters along with classes for weapon behaviors the characters can use in the game. Each character can make use of one weapon at a time, but can change weapons at any time during the game.
 
@@ -343,7 +341,7 @@ There are classes for game characters along with classes for weapon behaviors th
 
 
 
-### Observer Pattern (Weather Monitoring App)
+## Observer Pattern (Weather Monitoring App)
 
 The system has three components: the weather station (the physical device that acquires the actual weather data), the WeatherData object (that tracks the data coming from the Weather Station and updates the displays), and the display that shows users the current weather conditions.
 
@@ -377,7 +375,7 @@ public class WeatherData
 
 
 
-#### Observer Pattern
+### Observer Pattern
 
 1. A newspaper publisher begins publishing newspapers.
 2. You subscribe to a particular publisher, and every time there’s a new edition it gets delivered to you.
@@ -393,7 +391,7 @@ The Observer Pattern defines a one-to-many dependency between objects so that wh
 
 
 
-##### Loose Coupling
+#### Loose Coupling
 
 > Strive for loosely coupled designs between objects that interact.
 
@@ -401,7 +399,7 @@ Loosely coupled designs allow us to build flexible systems because they minimize
 
 
 
-#### Designing the Weather Station
+### Designing the Weather Station
 
 
 
@@ -545,7 +543,7 @@ OO Patterns
 
 
 
-### Decorator Pattern (Coffee Shop)
+## Decorator Pattern (Coffee Shop)
 
 The coffee shop has grown so quickly, they are scrambling to update their ordering systems to match their beverage offerings.
 
@@ -573,7 +571,7 @@ First improvement is below. What requirements or other factors might change that
 
 
 
-#### The Open-Closed Principle
+### The Open-Closed Principle
 
 > Classes should be open for extension, but closed for modification.
 
@@ -584,7 +582,7 @@ Allow classes to be easily extended to incorporate new behavior without modifyin
 
 
 
-#### Decorator Pattern
+### Decorator Pattern
 
 We have seen that representing beverage and condiments with inheritance has not worked out very well. We get class explosions and rigid designs, or we add functionality to the base class that isn’t appropriate for some of the subclasses.
 
@@ -617,7 +615,7 @@ Decorator Pattern attaches additional responsibilities to an object dynamically.
 
 
 
-#### Designing Beverages
+### Designing Beverages
 
 
 
@@ -752,4 +750,111 @@ OO Principles
 OO Patterns
 
 * Decorator - Attach additional responsibilities to an object dynamically. Decorators provide a flexible alternative to subclassing for extending functionality.
+
+
+
+
+
+## Factory Pattern (Pizza Store)
+
+By coding to an interface, you know you can insulate yourself from many of the changes that might happen to a system down the road. If your code is written to an interface, then it will work with any new classes implementing that interface through polymorphism. However, when you have code that makes use of lots of concrete classes, you’re looking for trouble because that code may have to be changed as new concrete classes are added. So your code will not be “closed for modification.” To extend your code with new concrete types, you’ll have to reopen it.
+
+So what can you do? Our first principle deals with change and guides us to identify the aspects that vary and separate them from what stays the same.
+
+
+
+![](./diagrams/svg/04_01_pizzastore_simple_factory_pattern.drawio.svg)
+
+
+
+````c#
+private Pizza OrderPizza(string type)
+{
+    Pizza pizza;
+    
+    // As the pizza selection changes over time, you’ll have to modify this code over and over.
+    if (type == "cheese")
+    {
+        pizza = new CheesePizza();
+    }
+    else if (type == "italian")
+    {
+        pizza = new ItalianPizza();
+    }
+    else if (type == "clam")
+    {
+        pizza = new ClamPizza();
+    }
+    else if (type == "veggie")
+    {
+        pizza = new VeggiePizza();
+    }
+    
+    // This is what we expect to stay the same.
+    // For the most part, preparing, cooking, and packaging a pizza has remained the same for years and years.
+    // So, we don’t expect this code to change, just the pizzas it operates on.
+    pizza.Prepare();
+    pizza.Bake();
+    pizza.Cut();
+    pizza.Box();
+
+    return pizza;
+}
+````
+
+````c#
+public class SimpleStaticPizzaFactory
+{
+    // Defining a simple factory as a static method is a common technique and is often called a static factory.
+    // Why use a static method? Because you don’t need to instantiate an object to make use of the create method.
+    // But it also has the disadvantage that you can’t subclass and change the behavior of the create method.
+    public static Pizza CreatePizza(string type)
+    {
+        Pizza pizza = null;
+        
+        if (type == "cheese")
+        {
+            pizza = new CheesePizza();
+        }
+        else if (type == "italian")
+        {
+            pizza = new ItalianPizza();
+        }
+        else if (type == "clam")
+        {
+            pizza = new ClamPizza();
+        }
+        else if (type == "veggie")
+        {
+            pizza = new VeggiePizza();
+        }
+
+        return pizza;
+    }
+}
+````
+
+````c#
+public class PizzaStore
+{
+    private readonly SimplePizzaFactory _factory;
+    
+    public PizzaStore(SimplePizzaFactory factory)
+    {
+        _factory = factory;
+    }
+    
+    public Pizza OrderPizza(string type)
+    {
+        Pizza pizza = _factory.CreatePizza(type);
+    
+        pizza.Prepare();
+        pizza.Bake();
+        pizza.Cut();
+        pizza.Box();
+        
+        return pizza;
+    }
+}
+````
 
