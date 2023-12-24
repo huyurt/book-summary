@@ -107,7 +107,7 @@ public static void ListAll()
 
 
 
-<img src="./diagrams/images/01_01_ef_core_executes_database_query.png" style="zoom: 67%;" />
+<img src="./diagrams/images/01_01_ef_core_executes_database_query.png" style="height:550px;" />
 
 
 
