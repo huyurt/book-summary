@@ -858,3 +858,163 @@ public class PizzaStore
 }
 ````
 
+
+
+### Franchising The Pizza Store
+
+Each franchise might want to offer different styles of pizzas (New York, Chicago, California, etc.), depending on where the franchise store is located.
+
+Starting to employ their own home-grown procedures for the rest of the process: they’d bake things a little differently, they’d forget to cut the pizza, and they’d use third-party boxes.
+You see that what you’d really like to do is create a framework that ties the store and the pizza creation together, yet still allows things to remain flexible.
+
+
+
+![](./diagrams/svg/04_02_franchising_pizzastore_factory_method_pattern.drawio.svg)
+
+
+
+````c#
+public abstract class Pizza
+{
+    public string Name;
+    public string Dough;
+    public string Sauce;
+    public List<string> Toppings = new();
+
+    public void Prepare()
+    {
+        Console.WriteLine("Preparing " + Name);
+        Console.WriteLine("Tossing dough...");
+        Console.WriteLine("Adding sauce...");
+        Console.WriteLine("Adding toppings:");
+        foreach(string topping in Toppings)
+        {
+            Console.WriteLine("	" + topping);
+        }
+    }
+
+    public virtual void Bake()
+    {
+        Console.WriteLine("Bake for 25 minutes at 350.");
+    }
+
+    public virtual void Cut()
+    {
+        Console.WriteLine("Cutting the pizza into diagonal slices.");
+    }
+
+    public virtual void Box()
+    {
+        Console.WriteLine("Place pizza in official PizzaStore box.");
+    }
+
+    public string GetName()
+    {
+        return Name;
+    }
+}
+
+public class NYStyleCheesePizza : Pizza
+{
+    public NYStyleCheesePizza()
+    {
+        Name = "NY Style Sauce and Cheese Pizza";
+        Dough = "Thin Crust Dough";
+        Sauce = "Marinara Sauce";
+        
+        Toppings.Add("Grated Reggiano Cheese");
+    }
+}
+
+public class ChicagoStyleCheesePizza : Pizza
+{
+    public ChicagoStyleCheesePizza()
+    {
+        Name = "Chicago Style Deep Dish Cheese Pizza";
+        Dough = "Extra Thick Crust Dough";
+        Sauce = "Plum Tomato Sauce";
+        
+        Toppings.Add("Shredded Mozzarella Cheese");
+    }
+    
+    public override void Cut()
+    {
+        Console.WriteLine("Cutting the pizza into square slices.");
+    }
+}
+````
+
+````c#
+public abstract class PizzaStore
+{
+    public Pizza OrderPizza(string type)
+    {
+        Pizza pizza = CreatePizza(type);
+        
+        pizza.Prepare();
+        pizza.Bake();
+        pizza.Cut();
+        pizza.Box();
+        
+        return pizza;
+    }
+    
+    protected abstract Pizza CreatePizza(string type);
+}
+
+public class NYPizzaStore : PizzaStore
+{
+    protected override Pizza CreatePizza(string type)
+    {
+        if (type == "cheese")
+        {
+            return new NYStyleCheesePizza();
+        }
+        else if (type == "veggie")
+        {
+            return new NYStyleVeggiePizza();
+        }
+        else if (type == "clam")
+        {
+            return new NYStyleClamPizza();
+        }
+        else
+        {
+            return null;
+        }
+    }
+}
+````
+
+````c#
+public class PizzaTest
+{
+    static void Main(string[] args)
+    {
+        PizzaStore nyStore = new NYPizzaStore();
+        PizzaStore chicagoStore = new ChicagoStore();
+        
+        Pizza pizza = nyStore.OrderPizza("cheese");
+        Console.WriteLine("Ethan ordered a " + pizza.GetName());
+        
+        Pizza pizza = chicagoStore.OrderPizza("cheese");
+        Console.WriteLine("Joel ordered a " + pizza.GetName());
+    }
+}
+````
+
+
+
+#### Factory Method Pattern
+
+The Factory Method Pattern defines an interface for creating an object, but lets subclasses decide which class to instantiate. Factory Method lets a class defer instantiation to subclasses.
+
+
+
+![](./diagrams/svg/04_03_factory_method_pattern.drawio.svg)
+
+
+
+The Factory Method Pattern gives us a way to encapsulate the instantiations of concrete types. Looking at the class diagram, you can see that the abstract Creator class gives you an interface with a method for creating objects, also known as the "factory method". Any other methods implemented in the abstract Creator are written to operate on products produced by the factory method. Only subclasses actually implement the factory method and create products.
+You will often hear developers say, "the Factory Method pattern lets subclasses decide which class to instantiate". Because the Creator class is written without knowledge of the actual products that will be created, we say "decide" not because the pattern allows subclasses themselves to decide, because the decision actually comes down to which subclass is used to create the product.
+
