@@ -1,6 +1,6 @@
 # Notes of Entity Framework Core In Action (2nd Edition)
 
-## Introduction to Entity Framework Core
+## 1. Introduction to Entity Framework Core
 
 EF Core is designed as an *object-relational mapper (O/RM)*. O/RMs work by mapping between two worlds: the relational database, with its own API, and the object-oriented software world of classes and software code.
 
@@ -160,3 +160,6 @@ public static void ChangeWubUrl()
 4. As a change is detected, EF Core starts a transaction. Every database update is done as an *atomic unit*: if multiple changes to the database occur, either they all succeed, or they all fail. This fact is important, because a relational database could get into a bad state if only part of an update were applied.
 5. The update request is converted by the database provider to an SQL command that does the update. If the SQL command is successful, the transaction is committed, and the `SaveChanges` method returns; otherwise, an exception is raised.
 
+
+
+## 2.Querying The Database

@@ -1018,3 +1018,8 @@ The Factory Method Pattern defines an interface for creating an object, but lets
 The Factory Method Pattern gives us a way to encapsulate the instantiations of concrete types. Looking at the class diagram, you can see that the abstract Creator class gives you an interface with a method for creating objects, also known as the "factory method". Any other methods implemented in the abstract Creator are written to operate on products produced by the factory method. Only subclasses actually implement the factory method and create products.
 You will often hear developers say, "the Factory Method pattern lets subclasses decide which class to instantiate". Because the Creator class is written without knowledge of the actual products that will be created, we say "decide" not because the pattern allows subclasses themselves to decide, because the decision actually comes down to which subclass is used to create the product.
 
+
+
+#### The Dependency Inversion Principle
+
+> Depend upon abstractions. Do not depend upon concrete classes.
