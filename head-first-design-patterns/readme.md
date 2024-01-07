@@ -571,7 +571,7 @@ First improvement is below. What requirements or other factors might change that
 
 
 
-### The Open-Closed Principle
+### Open-Closed Principle
 
 > Classes should be open for extension, but closed for modification.
 
@@ -1020,6 +1020,271 @@ You will often hear developers say, "the Factory Method pattern lets subclasses 
 
 
 
-#### The Dependency Inversion Principle
+### Dependency Inversion Principle
 
 > Depend upon abstractions. Do not depend upon concrete classes.
+
+The following guidelines can help you avoid OO designs that violate the Dependency Inversion Principle:
+
+* No variable should hold a reference to a concrete class.
+  * If you use new, you’ll be holding a reference to a concrete class. Use a factory to get around that!
+* No class should derive from a concrete class.
+  * If you derive from a concrete class, you’re depending on a concrete class. Derive from an abstraction, like an interface or an abstract class.
+* No method should override an implemented method of any of its base classes.
+  * If you override an implemented method, then your base class wasn’t really an abstraction to start with. Those methods implemented in the base class are meant to be shared by all your subclasses.
+
+This is guideline you should strive for, rather than a rule you should follow all the time.
+
+If you internalize these guidelines and have them in the back of your mind when you design, you’ll know when you are violating the principle and you’ll have a good reason for doing so. For instance, if you have a class that isn’t likely to change, and you know it, then it’s not the end of the world if you instantiate a concrete class in your code.
+
+
+
+#### Back At The Pizza Store...
+
+
+
+![](./diagrams/svg/04_04_pizza_store_factory_pattern.drawio.svg)
+
+
+
+Now we’re going to build a factory to create our ingredients; the factory will be responsible for creating each ingredient in the ingredient family. In other words, the factory will need to create dough, sauce, cheese, and so on...
+
+
+
+````c#
+// For each ingredient we define a create method in our interface.
+public interface IPizzaIngredientFactory
+{
+    public Dough CreateDough();
+    public Sauce CreateSauce();
+    public Cheese CreateCheese();
+    public Veggies[] CreateVeggies();
+    public Pepperoni CreatePepperoni();
+    public Clams CreateClam();
+    // Lots of new classes here, one per ingredient.
+}
+
+public class NYPizzaIngredientFactory : IPizzaIngredientFactory
+{
+    public Dough CreateDough()
+    {
+        return new ThinCrustDough();
+    }
+    
+    public Sauce CreateSauce()
+    {
+        return new MarinaraSauce();
+    }
+    
+    public Cheese CreateCheese()
+    {
+        return new ReggianoCheese();
+    }
+    
+    public Veggies[] CreateVeggies()
+    {
+        Veggies veggies[] = new {
+            new Garlic(),
+            new Onion(),
+            new Mushroom(),
+            new RedPepper()
+        };
+        return veggies;
+    }
+    
+    public Pepperoni CreatePepperoni()
+    {
+        return new SlicedPepperoni();
+    }
+    
+    public Clams CreateClam()
+    {
+        return new FreshClams();
+    }
+}
+````
+
+````c#
+public abstract class Pizza
+{
+    public string name;
+    public Dough dough;
+    public Sauce sauce;
+    public Veggies veggies[];
+    public Cheese cheese;
+    public Pepperoni pepperoni;
+    public Clams clam;
+    
+    abstract void Prepare();
+    
+    void Bake()
+    {
+        Console.WriteLine("Bake for 20 minutes at 350");
+    }
+    
+    void Cut()
+    {
+        Console.WriteLine("Cutting the pizza into diagonal slices");
+    }
+    
+    void Box()
+    {
+        Console.WriteLine("Place pizza in official Pizza Store box");
+    }
+    
+    void SetName(string name)
+    {
+        this.name = name;
+    }
+    
+    string GetName()
+    {
+        return name;
+    }
+    
+    public string ToString()
+    {
+        // code to print pizza here
+    }
+}
+
+public class CheesePizza : Pizza
+{
+    private readonly IPizzaIngredientFactory _ingredientFactory;
+    
+    public CheesePizza(IPizzaIngredientFactory ingredientFactory)
+    {
+        _ingredientFactory = ingredientFactory;
+    }
+
+    void Prepare()
+    {
+        Console.WriteLine("Preparing " + name);
+        dough = _ingredientFactory.CreateDough();
+        sauce = _ingredientFactory.CreateSauce();
+        cheese = _ingredientFactory.CreateCheese();
+    }
+}
+
+public class ClamPizza : Pizza
+{
+    private readonly IPizzaIngredientFactory _ingredientFactory;
+    
+    public ClamPizza(IPizzaIngredientFactory ingredientFactory)
+    {
+        _ingredientFactory = ingredientFactory;
+    }
+
+    void Prepare()
+    {
+        Console.WriteLine("Preparing " + name);
+        dough = _ingredientFactory.CreateDough();
+        sauce = _ingredientFactory.CreateSauce();
+        cheese = _ingredientFactory.CreateCheese();
+        clam = _ingredientFactory.CreateClam();
+    }
+}
+````
+
+````c#
+public class NYPizzaStore : PizzaStore
+{
+    protected Pizza CreatePizza(string item)
+    {
+        Pizza pizza = null;
+        IPizzaIngredientFactory ingredientFactory =
+new NYPizzaIngredientFactory();
+
+        if (item == "cheese")
+        {
+            pizza = new CheesePizza(ingredientFactory);
+            pizza.SetName("New York Style Cheese Pizza");
+        }
+        else if (item == "veggie")
+        {
+            pizza = new VeggiePizza(ingredientFactory);
+            pizza.SetName("New York Style Veggie Pizza");
+        }
+        else if (item == "clam")
+        {
+            pizza = new ClamPizza(ingredientFactory);
+            pizza.SetName("New York Style Clam Pizza");
+        }
+        else if (item == "pepperoni")
+        {
+            pizza = new PepperoniPizza(ingredientFactory);
+            pizza.SetName("New York Style Pepperoni Pizza");
+        }
+
+        return pizza;
+    }
+}
+````
+
+
+
+We provided a means of creating a family of ingredients for pizzas by introducing a new type of factory called an Abstract Factory.
+An Abstract Factory gives us an interface for creating a family of products. By writing code that uses this interface, we decouple our code from the actual factory that creates the products. That allows us to implement a variety of factories that produce products meant for different contexts such as different regions, different operating systems, or different look and feels.
+Because our code is decoupled from the actual products, we can substitute different factories to get different behaviors.
+
+
+
+### Abstract Factory Pattern
+
+The Abstract Factory Pattern provides an interface for creating families of related or dependent objects without specifying their concrete classes.
+
+We’ve certainly seen that Abstract Factory allows a client to use an abstract interface to create a set of related products without knowing (or caring) about the concrete products that are actually produced. In this way, the client is decoupled from any of the specifics of the concrete products.
+
+
+
+![](./diagrams/svg/04_05_abstract_factory_pattern.drawio.svg)
+
+
+
+
+![](./diagrams/svg/04_06_pizza_store_abstract_factory_pattern.drawio.svg)
+
+
+
+The job of an Abstract Factory is to define an interface for creating a set of products. Each method in that interface is responsible for creating a concrete product, and we implement a subclass of the Abstract Factory to supply those implementations. So, factory methods are a natural way to implement your product methods in your abstract factories.
+
+**Factory Method:** I use classes to create. I create objects but I do it through inheritance.
+
+I mean, the whole point of the Factory Method Pattern is that you’re using a subclass to do your creation for you. In that way, clients only need to know the abstract type they are using; the subclass worries about the concrete type. So, in other words, I keep clients decoupled from the concrete types.
+
+Use me to decouple your client code from the concrete classes you need to instantiate, or if you don’t know ahead of time all the concrete classes you are going to need. To use me, just subclass me and implement my factory method!
+
+**Abstract Factory:** I use objects to create. I create objects but I do it through object composition.
+
+I provide an abstract type for creating a family of products. Subclasses of this type define how those products are produced. To use the factory, you instantiate one and pass it into some code that is written against the abstract type. So, like Factory Method, my clients are decoupled from the actual concrete products they use.
+
+Use me whenever you have families of products you need to create and you want to make sure your clients create products that belong together.
+
+
+
+* All factories encapsulate object creation.
+* Simple Factory, while not a bona fide design pattern, is a simple way to decouple your clients from concrete classes.
+* Factory Method relies on inheritance: object creation is delegated to subclasses, which implement the factory method to create objects.
+* Abstract Factory relies on object composition: object creation is implemented in methods exposed in the factory interface.
+* All factory patterns promote loose coupling by reducing the dependency of your application on concrete classes.
+* The intent of Factory Method is to allow a class to defer instantiation to its subclasses.
+* The intent of Abstract Factory is to create families of related objects without having to depend on their concrete classes.
+* The Dependency Inversion Principle guides us to avoid dependencies on concrete types and to strive for abstractions.
+* Factories are a powerful technique for coding to abstractions, not concrete classes.
+
+
+
+OO Principles
+
+* Depend on abstractions. Do not depend on concrete classes.
+
+OO Patterns
+
+* Factory Method - Defines an interface for creating an object, but let subclasses decide which class to instantiate. Factory Method lets a class defer instantiation to the subclasses.
+* Abstract Factory - Provides an interface for creating families of related or dependent objects without specifying their concrete classes.
+
+
+
+
+
+## Singleton Pattern
