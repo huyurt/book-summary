@@ -1287,4 +1287,163 @@ OO Patterns
 
 
 
-## Singleton Pattern
+## Singleton Pattern (Chocolate Factory)
+
+There are many objects we only need one of: thread pools, caches, dialog boxes, objects that handle preferences and registry settings, objects used for logging, and objects that act as device drivers to devices like printers and graphics cards. If you assign an object to a global variable, then that object might be created when your application begins. If this object is resource intensive and your application never ends up using it? The Singleton Pattern, we can create our objects only when they are needed.
+
+
+
+````c#
+public class Singleton
+{
+    private static Signleton uniqueInstance;
+    
+    private Singleton() {}
+    
+    public static Singleton GetInstance()
+    {
+        if(uniqueInstance == null)
+        {
+            uniqueInstance = new Singleton();
+        }
+
+        return uniqueInstance;
+    }
+    
+    // other useful methods
+}
+````
+
+
+
+The job of the boiler is to take in chocolate and milk, bring them to a boil, and then pass them on to the next phase of making chocolate bars. You will notice they’ve tried to be very careful to ensure that bad things don’t happen, like draining 500 gallons of unboiled mixture, or filling the boiler when it’s already full, or boiling an empty boiler!
+
+
+
+````c#
+// Thread safe singleton object
+public class ChocolateBoiler
+{
+    private bool empty;
+    private bool boiled;
+    
+    // eager creation
+    private static readonly ChocolateBoiler uniqueInstance = new();
+
+    private ChocolateBoiler()
+    {
+        empty = true;
+        boiled = false;
+    }
+    
+    public static ChocolateBoiler GetInstance()
+    {
+        return uniqueInstance;
+    }
+
+    public void Fill()
+    {
+        if (IsEmpty())
+        {
+            empty = false;
+            boiled = false;
+            // fill the boiler with a milk/chocolate mixture
+        }
+    }
+
+    public void Drain()
+    {
+        if (!IsEmpty() && IsBoiled())
+        {
+            // drain the boiled milk and chocolate
+            empty = true;
+        }
+    }
+    
+    public void Boil()
+    {
+        if (!IsEmpty() && !IsBoiled())
+        {
+            // bring the contents to a boil
+            boiled = true;
+        }
+    }
+    
+    public bool IsEmpty()
+    {
+        return empty;
+    }
+
+    public bool IsBoiled()
+    {
+        return boiled;
+    }
+}
+````
+
+````c#
+// Thread safe singleton object
+public class ChocolateBoiler
+{
+    private bool empty;
+    private bool boiled;
+    
+    // lazy creation
+    private static volatile ChocolateBoiler uniqueInstance;
+    private static object syncRoot = new Object();
+
+    private ChocolateBoiler()
+    {
+        empty = true;
+        boiled = false;
+    }
+    
+    public static ChocolateBoiler GetInstance()
+    {
+        if (uniqueInstance == null)
+        {
+            lock (syncRoot)
+            {
+                if (uniqueInstance == null)
+                {
+                    uniqueInstance = new ChocolateBoiler();
+                }
+            }
+        }
+    }
+    
+    // other methods
+}
+````
+
+
+
+### Singleton Pattern
+
+The Singleton Pattern ensures a class has only one instance, and provides a global point of access to it.
+
+
+
+![](./diagrams/svg/05_01_singleton_pattern.drawio.svg)
+
+
+
+* The Singleton Pattern ensures you have at most one instance of a class in your application.
+* The Singleton Pattern also provides a global access point to that instance.
+* Implementation of the Singleton Pattern makes use of a private constructor, a static method combined with a static variable.
+* Examine your performance and resource constraints and carefully choose an appropriate Singleton implementation for multithreaded applications (and we should consider all applications multithreaded!).
+* Beware of the doublechecked locking implementation.
+* Be careful if you are using multiple class loaders; this could defeat the Singleton implementation and result in multiple instances.
+
+
+
+OO Patterns
+
+* Singleton - Ensure a class only has one instance and provide a global point of access to it.
+
+
+
+
+
+## Command Pattern
+
