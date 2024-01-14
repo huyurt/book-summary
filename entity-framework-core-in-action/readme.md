@@ -4,7 +4,7 @@
 
 EF Core is designed as an *object-relational mapper (O/RM)*. O/RMs work by mapping between two worlds: the relational database, with its own API, and the object-oriented software world of classes and software code.
 
-### The downsides of O/RMs
+### The Downsides of O/RMs
 
 1. *Object-relational impedance mismatch*. Database servers and object-oriented software use different principles; databases use primary keys to define that a row is unique, whereas .NET class instances are, by default, considered unique by their reference.
 
@@ -107,7 +107,7 @@ public static void ListAll()
 
 
 
-<img src="./diagrams/images/01_01_ef_core_executes_database_query.png" style="height:550px;" />
+![](./diagrams/images/01_01_ef_core_executes_database_query.png)
 
 
 

@@ -1445,5 +1445,30 @@ OO Patterns
 
 
 
-## Command Pattern
+## Command Pattern (Home Automation Remote Control)
+
+The remote control features seven programmable slots (each can be assigned to a different household device) along with corresponding on/off buttons for each. The remote also has a global undo button.
+It will control home automation devices such as lights, fans, hot tubs, audio equipment, and other similar controllable appliances. You should create an API for programming the remote so that each slot can be assigned to control a device or set of devices. It is important that -control all the current devices, and also any future devices that the vendors may supply.
+
+
+
+![](./diagrams/svg/06_01_home_automation_remote_control.drawio.svg)
+
+
+
+![](./diagrams/svg/06_02_home_automation_remote_control_class.drawio.svg)
+
+
+
+![](./diagrams/svg/06_03_command_pattern.drawio.svg)
+
+
+
+Restaurant example:
+
+
+
+![](./diagrams/svg/06_04_diner.drawio.svg)
+
+
 
