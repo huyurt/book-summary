@@ -1055,12 +1055,12 @@ Now we’re going to build a factory to create our ingredients; the factory will
 // For each ingredient we define a create method in our interface.
 public interface IPizzaIngredientFactory
 {
-    public Dough CreateDough();
-    public Sauce CreateSauce();
-    public Cheese CreateCheese();
-    public Veggies[] CreateVeggies();
-    public Pepperoni CreatePepperoni();
-    public Clams CreateClam();
+    Dough CreateDough();
+    Sauce CreateSauce();
+    Cheese CreateCheese();
+    Veggies[] CreateVeggies();
+    Pepperoni CreatePepperoni();
+    Clams CreateClam();
     // Lots of new classes here, one per ingredient.
 }
 
@@ -1192,8 +1192,7 @@ public class NYPizzaStore : PizzaStore
     protected Pizza CreatePizza(string item)
     {
         Pizza pizza = null;
-        IPizzaIngredientFactory ingredientFactory =
-new NYPizzaIngredientFactory();
+        IPizzaIngredientFactory ingredientFactory = new NYPizzaIngredientFactory();
 
         if (item == "cheese")
         {
@@ -1471,4 +1470,544 @@ Restaurant example:
 ![](./diagrams/svg/06_04_diner.drawio.svg)
 
 
+
+````c#
+public interface ICommand
+{
+    void Execute();
+}
+
+public class LightOnCommand : ICommand
+{
+    private readonly Light _light;
+    
+    public LightOnCommand(Light light)
+    {
+        _light = light;
+    }
+    
+    public void Execute()
+    {
+        _light.On();
+    }
+}
+
+public class GarageDoorOpenCommand : ICommand
+{
+    private readonly GarageDoor _garageDoor;
+    
+    public LightOnCommand(GarageDoor garageDoor)
+    {
+        _garageDoor = garageDoor;
+    }
+    
+    public void Execute()
+    {
+        _garageDoor.Up();
+    }
+}
+
+public class SimpleRemoteControl
+{
+    private ICommand slot;
+    
+    public SimpleRemoteControl() { }
+    
+    public void SetCommand(ICommand command)
+    {
+        slot = command;
+    }
+    
+    public void ButtonWasPressed()
+    {
+        slot.Execute();
+    }
+}
+````
+
+````c#
+public class RemoteControlTest
+{
+    static void Main(string[] args)
+    {
+        SimpleRemoteControl remote = new();
+        
+        Light light = new();
+        LightOnCommand lightOn = new();
+        
+        remote.SetCommand(lightOn);
+        remote.ButtonWasPressed();
+        
+        GarageDoor garageDoor = new();
+        GarageDoorOpenCommand garageOpen = new();
+
+        remote.SetCommand(garageOpen);
+        remote.ButtonWasPressed();
+    }
+}
+````
+
+
+
+### Command Pattern
+
+The Command Pattern encapsulates a request as an object, thereby letting you parameterize other objects with different requests, queue or log requests, and support undoable operations.
+
+
+
+![](./diagrams/svg/06_05_home_automation_remote_control_object_wrapping.drawio.svg)
+
+
+
+We know that a command object encapsulates a request by binding together a set of actions on a specific receiver. To achieve this, it packages the actions and the receiver into an object that exposes just one method, execute(). When called, execute() causes the actions to be invoked on the receiver. From the outside, no other objects really know what actions get performed on what receiver; they just know that if they call the execute() method, their request will be serviced. We’ve also seen a couple examples of parameterizing an object with a command.
+
+We haven’t encountered yet is using commands to implement queues and logs and support undo operations. The Meta Command Pattern allows you to create macros of commands so that you can execute multiple commands at once.
+
+
+
+![](./diagrams/svg/06_06_command_pattern.drawio.svg)
+
+
+
+### Assigning Commands to Slots
+
+#### Macro Command
+
+````c#
+public interface ICommand {
+    void Execute();
+    void Undo();
+}
+
+public class RemoteControl
+{
+    private readonly ICommand[] _onCommands;
+    private readonly ICommand[] _offCommands;
+    private ICommand _undoCommand;
+    
+    public RemoteControl()
+    {
+        _onCommands = new ICommand[7];
+        _offCommands = new ICommand[7];
+
+        // Null Object
+        ICommand noCommand = new NoCommand();
+        for (int i = 0; i < 7; i++)
+        {
+            _onCommands[i] = noCommand;
+            _offCommands[i] = noCommand;
+        }
+
+        _undoCommand = noCommand;
+    }
+    
+    public void SetCommand(int slot, ICommand onCommand, ICommand offCommand)
+    {
+        _onCommands[slot] = onCommand;
+        _offCommands[slot] = offCommand;
+    }
+    
+    public void OnButtonWasPushed(int slot)
+    {
+        _onCommands[slot].Execute();
+        _undoCommand = _onCommands[slot];
+    }
+    
+    public void OffButtonWasPushed(int slot)
+    {
+        _offCommands[slot].Execute();
+        _undoCommand = _offCommands[slot];
+    }
+    
+    public void UndoButtonWasPushed()
+    {
+        _undoCommand.Undo();
+    }
+    
+    public override string ToString()
+    {
+        StringBuilder stringBuilder = new();
+        stringBuilder.Append("\n------ Remote Control ------\n");
+
+        for(int i = 0; i < _onCommands.Length ; i++)
+        {
+            stringBuilder.Append($"[slot {i}] {_onCommands[i].GetType().Name}    {_offCommands[i].GetType().Name}\n");
+        }
+        
+        stringBuilder.Append($"[undo] {_undoCommand.GetType().Name}\n");
+        
+        return stringBuilder.ToString();
+    }
+}
+````
+
+````c#
+public class LightOnCommand : ICommand
+{
+    private readonly Light _light;
+    
+    public LightOffCommand(Light light)
+    {
+        _light = light;
+    }
+    
+    public void Execute()
+    {
+        _light.On();
+    }
+    
+    public void Undo()
+    {
+        _light.Off();
+    }
+}
+
+public class LightOffCommand : ICommand
+{
+    private readonly Light _light;
+    
+    public LightOffCommand(Light light)
+    {
+        _light = light;
+    }
+    
+    public void Execute()
+    {
+        _light.Off();
+    }
+    
+    public void Undo()
+    {
+        _light.On();
+    }
+}
+
+public class StereoOnWithCdCommand : ICommand
+{
+    private readonly Stereo _stereo;
+    
+    public LightOffCommand(Stereo stereo)
+    {
+        _stereo = stereo;
+    }
+    
+    public void Execute()
+    {
+        _stereo.On();
+        _stereo.SetCd();
+        _stereo.SetVolume(11);
+    }
+    
+    public void Undo()
+    {
+        _stereo.Off();
+    }
+}
+
+public class MacroCommand : ICommand
+{
+    private readonly ICommand[] _commands;
+    
+    public MacroCommand(ICommand[] commands)
+    {
+        _commands = commands;
+    }
+    
+    public void Execute()
+    {
+        for (int i = 0; i < _commands.Length; i++)
+        {
+            _commands[i].Execute();
+        }
+    }
+    
+    public void Undo()
+    {
+        for (int i = _commands.Length - 1; i >= 0; i--)
+        {
+            _commands[i].Undo();
+        }
+    }
+}
+````
+
+````c#
+public class CeilingFan
+{
+    public static final int HIGH = 3;
+    public static final int MEDIUM = 2;
+    public static final int LOW = 1;
+    public static final int OFF = 0;
+
+    private readonly string _location;
+    private int _speed;
+    
+    public CeilingFan(string location)
+    {
+        _location = location;
+        _speed = OFF;
+    }
+    
+    public void High()
+    {
+        _speed = HIGH;
+        // code to set fan to high
+    }
+    
+    public void Medium()
+    {
+        _speed = MEDIUM;
+        // code to set fan to medium
+    }
+    
+    public void Low()
+    {
+        _speed = LOW;
+        // code to set fan to low
+    }
+    
+    public void Off()
+    {
+        _speed = OFF;
+        // code to turn fan off
+    }
+    
+    public int GetSpeed() => _speed;
+}
+
+public class CeilingFanHighCommand : ICommand
+{
+    private readonly CeilingFan _ceilingFan;
+    private int _prevSpeed;
+    
+    public CeilingFanHighCommand(CeilingFan ceilingFan)
+    {
+        _ceilingFan = ceilingFan;
+    }
+    
+    public void Execute()
+    {
+        _prevSpeed = ceilingFan.GetSpeed();
+        _ceilingFan.High();
+    }
+    
+    public void Undo()
+    {
+        switch(_prevSpeed)
+        {
+            case CeilingFan.HIGH:
+                _ceilingFan.High();
+                break;
+            case CeilingFan.MEDIUM:
+                _ceilingFan.Medium();
+                break;
+            case CeilingFan.LOW:
+                _ceilingFan.Low();
+                break;
+            case CeilingFan.OFF:
+                _ceilingFan.Off();
+                break;
+        }
+    }
+}
+
+public class CeilingFanMediumCommand : ICommand
+{
+    private readonly CeilingFan _ceilingFan;
+    private int _prevSpeed;
+    
+    public CeilingFanMediumCommand(CeilingFan ceilingFan)
+    {
+        _ceilingFan = ceilingFan;
+    }
+    
+    public void Execute()
+    {
+        _prevSpeed = ceilingFan.GetSpeed();
+        _ceilingFan.Medium();
+    }
+    
+    public void Undo()
+    {
+        switch(_prevSpeed)
+        {
+            case CeilingFan.HIGH:
+                _ceilingFan.High();
+                break;
+            case CeilingFan.MEDIUM:
+                _ceilingFan.Medium();
+                break;
+            case CeilingFan.LOW:
+                _ceilingFan.Low();
+                break;
+            case CeilingFan.OFF:
+                _ceilingFan.Off();
+                break;
+        }
+    }
+}
+````
+
+````c#
+public class RemoteLoader
+{
+    static void Main(string[] args)
+    {
+        RemoteControl remoteControl = new();
+
+        Light livingRoomLight = new("Living Room");
+        LightOnCommand livingRoomLightOn = new(livingRoomLight);
+        LightOffCommand livingRoomLightOff = new(livingRoomLight);
+
+        Light kitchenLight = new("Kitchen");
+        LightOnCommand kitchenLightOn = new(kitchenLight);
+        LightOffCommand kitchenLightOff = new(kitchenLight);
+
+        CeilingFan ceilingFan = new("Living Room");
+        CeilingFanOnCommand ceilingFanOn = new(ceilingFan);
+        CeilingFanOffCommand ceilingFanOff = new(ceilingFan);
+
+        GarageDoor garageDoor = new("Garage");
+        GarageDoorUpCommand garageDoorUp = new(garageDoor);
+        GarageDoorDownCommand garageDoorDown = new(garageDoor);
+
+        Stereo stereo = new("Living Room");
+        StereoOnWithCDCommand stereoOnWithCD = new(stereo);
+        StereoOffCommand stereoOff = new(stereo);
+
+        // Macro command
+        Light light = new("Living Room");
+        TV tv = new("Living Room");
+        Stereo stereo = new("Living Room");
+        Hottub hottub = new();
+        LightOnCommand lightOn = new(light);
+        StereoOnCommand stereoOn = new(stereo);
+        TVOnCommand tvOn = new(tv);
+        HottubOnCommand hottubOn = new(hottub);
+        LightOffCommand lightOff = new(light);
+        StereoOffCommand stereoOff = new(stereo);
+        TVOffCommand tvOff = new(tv);
+        HottubOffCommand hottubOff = new(hottub);
+        ICommand[] partyOn = { lightOn, stereoOn, tvOn, hottubOn };
+        ICommand[] partyOff = { lightOff, stereoOff, tvOff, hottubOff };
+        MacroCommand partyOnMacro = new(partyOn);
+        MacroCommand partyOffMacro = new(partyOff);
+
+        remoteControl.SetCommand(0, livingRoomLightOn, livingRoomLightOff);
+        remoteControl.SetCommand(1, kitchenLightOn, kitchenLightOff);
+        remoteControl.SetCommand(2, ceilingFanOn, ceilingFanOff);
+        remoteControl.SetCommand(3, stereoOnWithCD, stereoOff);
+        remoteControl.SetCommand(4, partyOnMacro, partyOffMacro);
+
+        Console.WriteLine(remoteControl);
+        //------ Remote Control -------
+        //[slot 0] LightOnCommand LightOffCommand
+        //[slot 1] LightOnCommand LightOffCommand
+        //[slot 2] CeilingFanOnCommand CeilingFanOffCommand
+        //[slot 3] StereoOnWithCDCommand StereoOffCommand
+        //[slot 4] MacroCommand MacroCommand
+        //[slot 5] NoCommand NoCommand
+        //[slot 6] NoCommand NoCommand
+        //[undo] NoCommand
+
+        remoteControl.OnButtonWasPushed(0);
+        remoteControl.OffButtonWasPushed(0);
+        remoteControl.OnButtonWasPushed(1);
+        remoteControl.OffButtonWasPushed(1);
+        remoteControl.OnButtonWasPushed(2);
+        remoteControl.OffButtonWasPushed(2);
+        remoteControl.OnButtonWasPushed(3);
+        remoteControl.OffButtonWasPushed(3);
+        remoteControl.UndoButtonWasPushed();
+    }
+}
+````
+
+
+
+#### Null Object
+
+In the remote control, we didn’t want to check to see if a command was loaded every time we referenced a slot. For instance, in the OnButtonWasPushed() method, we would need code like this:
+
+
+
+````c#
+public void OnButtonWasPushed(int slot)
+{
+    if (_onCommands[slot] != null)
+    {
+        _onCommands[slot].Execute();
+    }
+}
+````
+
+
+
+Implement a command that does nothing!
+
+
+
+````c#
+public class NoCommand : ICommand
+{
+    public void Execute() { }
+}
+````
+
+
+
+So, in the output of our test run, you’re seeing only slots that have been assigned to a command other than the default NoCommand object, which we assigned when we created the RemoteControl constructor.
+
+
+
+#### Queuing Requests
+
+Commands give us a way to package a piece of computation (a receiver and a set of actions) and pass it around as a first-class object. Now, the computation itself may be invoked long after some client application creates the command object. In fact, it may even be invoked by a different thread. We can take this scenario and apply it to many useful applications, such as schedulers, thread pools, and job queues, to name a few.
+
+Imagine a job queue: you add commands to the queue on one end, and on the other end sits a group of threads. Threads run the following script: they remove a command from the queue, call its execute() method, wait for the call to finish, and then discard the command object and retrieve a new one.
+
+
+
+![](./diagrams/svg/06_07_command_pattern_queuing.drawio.svg)
+
+
+
+The job queue classes are totally decoupled from the objects that are doing the computation. One minute a thread may be computing a financial computation, and the next it may be retrieving something from the network. The job queue objects don’t care; they just retrieve commands and call execute(). Likewise, as long as you put objects into the queue that implement the Command Pattern, your execute() method will be invoked when a thread is available.
+
+
+
+#### Logging Requests
+
+The semantics of some applications require that we log all actions and be able to recover after a crash by reinvoking those actions. The Command Pattern can support these semantics with the addition of two methods: store() and load().
+
+As we execute commands, we store a history of them on disk. When a crash occurs, we reload the command objects and invoke their execute() methods in batch and in order.
+
+This kind of logging wouldn’t make sense for a remote control; however, there are many applications that invoke actions on large data structures that can’t be quickly saved each time a change is made. By using logging, we can save all the operations since the last checkpoint, and if there is a system failure, apply those operations to our checkpoint. For example, a spreadsheet application: we might want to implement our failure recovery by logging the actions on the spreadsheet rather than writing a copy of the spreadsheet to disk every time a change occurs. In more advanced applications, these techniques can be extended to apply to sets of operations in a transactional manner so that all of the operations complete, or none of them do.
+
+
+
+![](./diagrams/svg/06_08_command_pattern_logging.drawio.svg)
+
+
+
+* The Command Pattern decouples an object making a request from the one that knows how to perform it.
+* A Command object is at the center of this decoupling and encapsulates a receiver with an action (or set of actions).
+* An invoker makes a request of a Command object by calling its execute() method, which invokes those actions on the receiver.
+* Invokers can be parameterized with Commands, even dynamically at runtime.
+* Commands may support undo by implementing an undo() method that restores the object to its previous state before the execute() method was last called.
+* MacroCommands are a simple extension of the Command Pattern that allow multiple commands to be invoked. Likewise, MacroCommands can easily support undo().
+* In practice, it’s not uncommon for “smart” Command objects to implement the request themselves rather than delegating to a receiver.
+* Commands may also be used to implement logging and transactional systems.
+
+
+
+OO Patterns
+
+* Command - Encapsulates a request as an object, thereby letting you parameterize clients with different requests, queue or log requests, and support undoable operations.
+
+
+
+
+
+## Adapter and Facade Patterns
 
