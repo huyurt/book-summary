@@ -2011,3 +2011,17 @@ OO Patterns
 
 ## Adapter and Facade Patterns
 
+### Adapter Pattern
+
+![](./diagrams/svg/07_01_oo_adapter.drawio.svg)
+
+
+
+The Adapter Pattern converts the interface of a class into another interface the clients expect. Adapter lets classes work together that couldn’t otherwise because of incompatible interfaces. This acts to decouple the client from the implemented interface, and if we expect the interface to change over time, the adapter encapsulates that change so that the client doesn’t have to be modified each time it needs to operate against a different interface.
+
+
+
+![](./diagrams/svg/07_02_adapter_diagram.drawio.svg)
+
+
+
