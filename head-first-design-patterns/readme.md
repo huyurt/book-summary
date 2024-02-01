@@ -1290,8 +1290,6 @@ OO Patterns
 
 There are many objects we only need one of: thread pools, caches, dialog boxes, objects that handle preferences and registry settings, objects used for logging, and objects that act as device drivers to devices like printers and graphics cards. If you assign an object to a global variable, then that object might be created when your application begins. If this object is resource intensive and your application never ends up using it? The Singleton Pattern, we can create our objects only when they are needed.
 
-
-
 ````c#
 public class Singleton
 {
@@ -1316,8 +1314,6 @@ public class Singleton
 
 
 The job of the boiler is to take in chocolate and milk, bring them to a boil, and then pass them on to the next phase of making chocolate bars. You will notice they’ve tried to be very careful to ensure that bad things don’t happen, like draining 500 gallons of unboiled mixture, or filling the boiler when it’s already full, or boiling an empty boiler!
-
-
 
 ````c#
 // Thread safe singleton object
@@ -1929,8 +1925,6 @@ public class RemoteLoader
 
 In the remote control, we didn’t want to check to see if a command was loaded every time we referenced a slot. For instance, in the OnButtonWasPushed() method, we would need code like this:
 
-
-
 ````c#
 public void OnButtonWasPushed(int slot)
 {
@@ -1945,16 +1939,12 @@ public void OnButtonWasPushed(int slot)
 
 Implement a command that does nothing!
 
-
-
 ````c#
 public class NoCommand : ICommand
 {
     public void Execute() { }
 }
 ````
-
-
 
 So, in the output of our test run, you’re seeing only slots that have been assigned to a command other than the default NoCommand object, which we assigned when we created the RemoteControl constructor.
 
@@ -2021,7 +2011,235 @@ The Adapter Pattern converts the interface of a class into another interface the
 
 
 
-![](./diagrams/svg/07_02_adapter_diagram.drawio.svg)
+![](./diagrams/svg/07_02_adapter_pattern.drawio.svg)
 
 
+
+### Facade Pattern (Theater)
+
+Facade pattern hides all the complexity of one or more classes behind a clean.
+
+You have assembled a system complete with a streaming player, a projection video system, an automated screen, surround sound, and even a popcorn popper. You have spent weeks running wire, mounting the projector, making all the connections, and fine tuning. Now it’s time to put it all in motion and enjoy a movie.
+
+
+
+![](./diagrams/svg/07_03_theater_diagram.drawio.svg)
+
+
+
+But there is just one thing to watch the movie, you need to perform a few tasks:
+
+1. Turn on the popcorn popper
+2. Start the popper popping
+3. Dim the lights
+4. Put the screen down
+5. Turn the projector on
+6. Set the projector input to streaming player
+7. Put the projector on widescreen mode
+8. Turn the sound amplifier on
+9. Set the amplifier to streaming player input
+10. Set the amplifier to surround sound
+11. Set the amplifier volume to medium (5)
+12. Turn the streaming player on
+13. Start playing the movie
+
+````c#
+popper.On();
+popper.Pop();
+
+lights.Dim(10);
+
+screen.Down();
+
+projector.On();
+projector.SetInput(player);
+projector.WideScreenMode();
+
+amp.On();
+amp.SetStreamingPlayer(player);
+amp.SetSurroundSound();
+amp.SetVolume(5);
+
+player.On();
+player.Play(movie);
+````
+
+But there’s more...
+
+* When the movie is over, how do you turn everything off? Wouldn’t you have to do all of this over again, in reverse?
+* Wouldn’t it be as complex to listen to the radio?
+* If you decide to upgrade your system, you’re probably going to have to learn a slightly different procedure.
+
+The complexity of using your home theater is becoming apparent!
+
+
+
+With the Facade Pattern you can take a complex subsystem and make it easier to use by implementing a Facade class that provides one, more reasonable interface. If you need the power of the complex subsystem, it’s still there for you to use, but if all you need is a straightforward interface, the Facade is there for you.
+
+
+
+Facades don’t “encapsulate” the subsystem classes; they merely provide a simplified interface to their functionality. The subsystem classes still remain available for direct use by clients that need to use more specific interfaces. This is a nice property of the Facade Pattern: it provides a simplified interface while still exposing the full functionality of the system to those who may need it.
+
+
+
+![](./diagrams/svg/07_04_theater_facade_diagram.drawio.svg)
+
+
+
+````c#
+public class HomeTheaterFacade
+{
+    // Here’s the composition; these are all the components of the subsystem we are going to use.
+    private readonly Amplifier _amp;
+    private readonly Tuner _tuner;
+    private readonly StreamingPlayer _player;
+    private readonly Projector _projector;
+    private readonly TheaterLights _lights;
+    private readonly Screen _screen;
+    private readonly PopcornPopper _popper;
+    
+    public HomeTheaterFacade(
+        // The facade is passed a reference to each component of the subsystem in its constructor. The facade then assigns each to the corresponding instance variable.
+        Amplifier amp,
+        Tuner tuner,
+        StreamingPlayer player,
+        Projector projector,
+        Screen screen,
+        TheaterLights lights,
+        PopcornPopper popper
+    )
+    {
+        _amp = amp;
+        _tuner = tuner;
+        _player = player;
+        _projector = projector;
+        _screen = screen;
+        _lights = lights;
+        _popper = popper;
+    }
+    
+    public void WatchMovie(String movie)
+    {
+        Console.WriteLine("Get ready to watch a movie...");
+        popper.On();
+        popper.Pop();
+        lights.Dim(10);
+        screen.Down();
+        projector.On();
+        projector.WideScreenMode();
+        amp.On();
+        amp.SetStreamingPlayer(player);
+        amp.SetSurroundSound();
+        amp.SetVolume(5);
+        player.On();
+        player.Play(movie);
+    }
+
+    public void EndMovie()
+    {
+        Console.WriteLine("Shutting movie theater down...");
+        popper.Off();
+        lights.On();
+        screen.Up();
+        projector.Off();
+        amp.Off();
+        player.Stop();
+        player.Off();
+    }
+    
+    // other methods here
+}
+````
+
+````c#
+public class HomeTheaterTestDrive
+{
+    static void Main(string[] args)
+    {
+        // instantiate components here
+        HomeTheaterFacade homeTheater = 
+            new HomeTheaterFacade(amp, tuner, player, projector, screen, lights, popper);
+
+        homeTheater.WatchMovie("Raiders of the Lost Ark");
+        
+        homeTheater.EndMovie();
+    }
+}
+````
+
+
+
+To use the Facade Pattern, we create a class that simplifies and unifies a set of more complex classes that belong to some subsystem. Unlike a lot of patterns, Facade is fairly straightforward; there are no mind-bending abstractions to get your head around. But that doesn’t make it any less powerful: the Facade Pattern allows us to avoid tight coupling between clients and subsystems and also helps us adhere to a new object-oriented principle.
+
+The Facade Pattern provides a unified interface to a set of interfaces in a subsystem. Facade defines a higherlevel interface that makes the subsystem easier to use.
+
+
+
+![](./diagrams/svg/07_05_facade_pattern.drawio.svg)
+
+
+
+#### Principle of Least Knowledge
+
+> Talk only to your immediate friends.
+
+This principle prevents us from creating designs that have a large number of classes coupled together so that changes in one part of the system cascade to other parts. When you build a lot of dependencies between many classes, you are building a fragile system that will be costly to maintain and complex for others to understand.
+
+How do you keep from doing this? The principle provides some guidelines: take any object, and from any method in that object, invoke only methods that belong to:
+
+* The object itself
+* Objects passed in as a parameter to the method
+* Any object the method creates or instantiates
+* Any components of the object
+
+````c#
+// Without the Principle
+public float GetTemp()
+{
+    Thermometer thermometer = station.GetThermometer();
+    return thermometer.GetTemperature();
+}
+
+// With the Principle
+public float GetTemp()
+{
+    return station.GetTemperature(); // This reduces the number of classes we’re dependent on.
+}
+````
+
+
+
+While the principle reduces the dependencies between objects and studies have shown this reduces software maintenance, it is also the case that applying this principle results in more “wrapper” classes being written to handle method calls to other components. This can result in increased complexity and development time as well as decreased runtime performance.
+
+
+
+| Pattern   | Intent                                               |
+| --------- | ---------------------------------------------------- |
+| Decorator | Doesn’t alter the interface, but adds responsibility |
+| Adapter   | Converts one interface to another                    |
+| Facade    | Makes an interface simpler                           |
+
+
+
+* When you need to use an existing class and its interface is not the one you need, use an adapter.
+* When you need to simplify and unify a large interface or  complex set of interfaces, use a facade.
+* An adapter changes an interface into one a client expects.
+* A facade decouples a client from a complex subsystem.
+* Implementing an adapter may require little work or a great deal of work depending on the size and complexity of the target interface.
+* Implementing a facade requires that we compose the facade with its subsystem and use delegation to perform the work of the facade.
+* There are two forms of the Adapter Pattern: object and class adapters. Class adapters require multiple inheritance.
+* You can implement more than one facade for a subsystem.
+* An adapter wraps an object to change its interface, a decorator wraps an object to add new behaviors and responsibilities, and a facade “wraps” a set of objects to simplify.
+
+
+
+OO Principles
+
+* Talk only to your friends.
+
+
+
+
+
+## Template Method Pattern
 
