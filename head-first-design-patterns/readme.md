@@ -2241,5 +2241,186 @@ OO Principles
 
 
 
-## Template Method Pattern
+## Template Method Pattern (Some More Caffeine)
+
+Coffee Recipe
+
+1. Boil some water
+2. Brew coffee in boiling water
+3. Pour coffee in cup
+4. Add sugar and milk
+
+Tea Recipe
+
+1. Boil some water
+2. Steep tea in boiling water
+3. Pour tea in cup
+4. Add lemon
+
+The recipe for coffee looks a lot like the recipe for tea. 
+
+
+
+````c#
+public class Coffee
+{
+    public void PrepareRecipe()
+    {
+        BoilWater();
+        BrewCoffeeGrinds();
+        PourInCup();
+        AddSugarAndMilk();
+    }
+    
+    public void BoilWater(){
+        Console.WriteLine("Boiling water");
+    }
+    
+    public void BrewCoffeeGrinds()
+    {
+        Console.WriteLine("Dripping Coffee through filter");
+    }
+    
+    public void PourInCup()
+    {
+        Console.WriteLine("Pouring into cup");
+    }
+    
+    public void AddSugarAndMilk()
+    {
+        Console.WriteLine("Adding Sugar and Milk");
+    }
+}
+
+public class Tea
+{
+    public void PrepareRecipe()
+    {
+        BoilWater();
+        SteepTeaBag();
+        PourInCup();
+        AddLemon();
+    }
+    
+    public void BoilWater(){
+        Console.WriteLine("Boiling water");
+    }
+    
+    public void SteepTeaBag()
+    {
+        Console.WriteLine("Steeping the tea");
+    }
+    
+    public void PourInCup()
+    {
+        Console.WriteLine("Pouring into cup");
+    }
+    
+    public void AddLemon()
+    {
+        Console.WriteLine("Adding Lemon");
+    }
+}
+````
+
+
+
+When we’ve got code duplication, that’s a good sign we need to clean up the design. It seems like here we should abstract the commonality into a base class since coffee and tea are so similar.
+
+
+
+![](./diagrams/svg/08_01_coffee_tea_diagram.drawio.svg)
+
+
+
+Notice that both recipes follow the same algorithm:
+
+1. Boil some water.
+2. Use the hot water to extract the coffee or tea.
+3. Pour the resulting beverage into a cup.
+4. Add the appropriate condiments to the beverage.
+
+1 - 3 These two are already abstracted into the base class.
+
+2 - 4 These aren’t abstracted but are the same; they just apply to different beverages.
+
+
+
+Abstracting prepareRecipe()
+
+Steeping and brewing aren’t so different; they’re pretty analogous. So let’s make a new method name, say, brew(), and we’ll use the same name whether we’re brewing coffee or steeping tea.
+Likewise, adding sugar and milk is pretty much the same as adding a lemon: both are adding condiments to the beverage. Let’s also make up a new method name, addCondiments(), to handle this. So, our new prepareRecipe() method will look like this:
+
+````c#
+public void PrepareRecipe()
+{
+    BoilWater();
+    Brew();
+    PourInCup();
+    AddCondiments();
+}
+````
+
+
+
+````c#
+public abstract class CaffeineBeverage
+{
+    public void PrepareRecipe()
+    {
+        BoilWater();
+        Brew();
+        PourInCup();
+        AddCondiments();
+    }
+
+    public abstract void Brew();
+    
+    public abstract void AddCondiments();
+    
+    public virtual void BoilWater()
+    {
+        Console.WriteLine("Boiling water")
+    }
+    
+    public virtual void PourInCup()
+    {
+        Console.WriteLine("Pouring into cup");
+    }
+}
+
+public class Tea : CaffeineBeverage
+{
+    public c void Brew()
+    {
+        Console.WriteLine("Steeping the tea");
+    }
+
+    public virtual void AddCondiments()
+    {
+        Console.WriteLine("Adding Lemon");
+    }
+}
+
+public class Coffee : CaffeineBeverage
+{
+    public virtual void Brew()
+    {
+        Console.WriteLine("Dripping Coffee through filter");
+    }
+
+    public virtual void AddCondiments()
+    {
+        Console.WriteLine("Adding Sugar and Milk");
+    }
+}
+````
+
+
+
+![](./diagrams/svg/08_02_coffee_tea_abstract_diagram.drawio.svg)
+
+
+
+The Template Method defines the steps of an algorithm and allows subclasses to provide the implementation for one or more steps.
 
