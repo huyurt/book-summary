@@ -2424,3 +2424,61 @@ public class Coffee : CaffeineBeverage
 
 The Template Method defines the steps of an algorithm and allows subclasses to provide the implementation for one or more steps.
 
+
+
+### Template Method Pattern
+
+The Template Method Pattern defines the skeleton of an algorithm in a method, deferring some steps to subclasses. Template Method lets subclasses redefine certain steps of an algorithm without changing the algorithm’s structure.
+
+It’s a method that defines an algorithm as a set of steps. One or more of these steps is defined to be abstract and implemented by a subclass. This ensures the algorithm’s structure stays unchanged, while subclasses provide some part of the implementation.
+
+
+
+![](./diagrams/svg/08_03_template_method_pattern.drawio.svg)
+
+
+
+````c#
+public abstract class AbstractClass
+{
+    public void TemplateMethod()
+    {
+        primitiveOperation1();
+        primitiveOperation2();
+        concreteOperation();
+    }
+
+    public abstract void PrimitiveOperation1();
+    
+    public abstract void PrimitiveOperation2();
+    
+    public virtual void ConcreteOperation()
+    {
+        // implementation here
+    }
+    
+    // We can also have concrete methods that do nothing by default; we call these “hooks.” Subclasses are free to override these but don’t have to.
+    public virtual Hook() { }
+}
+````
+
+
+
+Use abstract methods when your subclass MUST provide an implementation of the method or step in the algorithm. Use hooks when that part of the algorithm is optional. With hooks, a subclass may choose to implement that hook, but it doesn’t have to. Another use is to give the subclass a chance to react to some step in the template method that is about to happen or just happened. For instance, a hook method like justReorderedList() allows the subclass to perform some activity (such as redisplaying an onscreen representation) after an internal list is reordered. A hook can also provide a subclass with the ability to make a decision for the abstract class.
+
+
+
+#### Hollywood Principle
+
+> Don’t call us, we’ll call you.
+
+The Hollywood Principle gives us a way to prevent "dependency rot." Dependency rot happens when you have high-level components depending on low-level components depending on high-level components depending on sideways components depending on low-level components, and so on.
+
+With the Hollywood Principle, we allow low-level components to hook themselves into a system, but the high-level components determine when they are needed, and how. In other words, the high-level components give the low-level components the “don’t call us, we’ll call you” treatment.
+
+
+
+![](./diagrams/svg/08_04_hollywood_principle.drawio.svg)
+
+
+
