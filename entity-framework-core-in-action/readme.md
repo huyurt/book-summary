@@ -4,6 +4,8 @@
 
 EF Core is designed as an *object-relational mapper (O/RM)*. O/RMs work by mapping between two worlds: the relational database, with its own API, and the object-oriented software world of classes and software code.
 
+
+
 ### The Downsides of O/RMs
 
 1. *Object-relational impedance mismatch*. Database servers and object-oriented software use different principles; databases use primary keys to define that a row is unique, whereas .NET class instances are, by default, considered unique by their reference.
@@ -15,6 +17,8 @@ EF Core is designed as an *object-relational mapper (O/RM)*. O/RMs work by mappi
    ````
 
    An expression body property such as the one just shown is the right thing to do in C#, but the same property would throw an exception if you tried to filter or order on that property, because EF Core needs a FullName column in the table so that it can apply an SQL `WHERE` or `ORDER` command at the database level.
+
+
 
 ### First Ef Core Application
 
@@ -162,4 +166,6 @@ public static void ChangeWubUrl()
 
 
 
-## 2.Querying The Database
+
+
+## 2. Querying The Database
