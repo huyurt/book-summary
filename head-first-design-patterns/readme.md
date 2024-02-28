@@ -2443,9 +2443,9 @@ public abstract class AbstractClass
 {
     public void TemplateMethod()
     {
-        primitiveOperation1();
-        primitiveOperation2();
-        concreteOperation();
+        PrimitiveOperation1();
+        PrimitiveOperation2();
+        ConcreteOperation();
     }
 
     public abstract void PrimitiveOperation1();
@@ -2514,4 +2514,386 @@ OO Patterns
 
 
 
-## Iterator and Composite Patterns
+## Iterator and Composite Patterns (Diner and Pancake House Merge)
+
+The Pancake House menu as the breakfast menu and the Diner’s menu as the lunch menu.
+
+They've agreed on an implementation for the menu items but they can’t agree on how to implement our menus. The Pancake House used an List to hold its menu items, and the Diner used an Array. Neither one of them is willing to change their implementations. They just have too much code written that depends on them.
+
+
+
+````c#
+public class MenuItem
+{
+    private readonly string _name;
+    private readonly string _description;
+    private readonly bool _vegetarian;
+    private readonly double _price;
+    
+    public MenuItem(
+        string name,
+        string description,
+        bool vegetarian,
+        double price
+    )
+    {
+        _name = name;
+        _description = description;
+        _vegetarian = vegetarian;
+        _price = price;
+    }
+
+    public string GetName()
+    {
+        return _name;
+    }
+
+    public string GetDescription()
+    {
+        return _description;
+    }
+
+    public double GetPrice()
+    {
+        return _price;
+    }
+
+    public bool IsVegetarian()
+    {
+        return _vegetarian;
+    }
+}
+````
+
+````c#
+public class PancakeHouseMenu
+{
+    private readonly List<MenuItem> _menuItems;
+
+    public PancakeHouseMenu()
+    {
+        _menuItems = new List<MenuItem>();
+
+        AddItem("K&B's Pancake Breakfast", "Pancakes with scrambled eggs and toast", true, 2.99);
+        AddItem("Regular Pancake Breakfast", "Pancakes with fried eggs, sausage", false, 2.99);
+        AddItem("Blueberry Pancakes", "Pancakes made with fresh blueberries", true, 3.49);
+        AddItem("Waffles", "Waffles with your choice of blueberries or strawberries", true, 3.59);
+    }
+
+    public void AddItem(string name, string description, bool vegetarian, double price)
+    {
+        MenuItem menuItem = new MenuItem(name, description, vegetarian, price);
+        _menuItems.add(menuItem);
+    }
+
+    public List<MenuItem> GetMenuItems()
+    {
+        return _menuItems;
+    }
+
+    // other menu methods here
+}
+
+public class DinerMenu
+{
+    private const int MAX_ITEMS = 6;
+    private int numberOfItems = 0;
+
+    private readonly MenuItem[] _menuItems;
+    
+    public DinerMenu()
+    {
+        _menuItems = new MenuItem[MAX_ITEMS];
+
+        AddItem("Vegetarian BLT", "(Fakin') Bacon with lettuce & tomato on whole wheat", true, 2.99);
+        AddItem("BLT", "Bacon with lettuce & tomato on whole wheat", false, 2.99);
+        AddItem("Soup of the day", "Soup of the day, with a side of potato salad", false, 3.29);
+        AddItem("Hotdog", "A hot dog, with sauerkraut, relish, onions, topped with cheese", false, 3.05);
+        // a couple of other Diner Menu items added here
+    }
+
+    public void AddItem(string name, string description, bool vegetarian, double price)
+    {
+        MenuItem menuItem = new MenuItem(name, description, vegetarian, price);
+        if (numberOfItems >= MAX_ITEMS)
+        {
+            Console.WriteLine("Sorry, menu is full! Can't add item to menu");
+        }
+        else
+        {
+            _menuItems[numberOfItems++] = menuItem;
+        }
+    }
+
+    public MenuItem[] GetMenuItems()
+    {
+        return _menuItems;
+    }
+
+    // other menu methods here
+}
+````
+
+
+
+Imagine you have been hired by the new company formed by the merger of the Diner and the Pancake House to create a waitress. The spec for the waitress specifies that she can print a custom menu for customers on demand, and even tell you if a menu item is vegetarian without having to ask the cook.
+
+
+
+TheWaitress Specification
+
+printMenu()
+
+- prints every item on the breakfast and lunch menus
+
+printBreakfastMenu()
+
+- prints just breakfast items
+
+printLunchMenu()
+
+- prints just lunch items
+
+printVegetarianMenu()
+
+- prints all vegetarian menu items
+
+isItemVegetarian(name)
+
+- given the name of an item, returns true if the items is vegetarian, otherwise, returns false
+
+
+
+````c#
+PancakeHouseMenu pancakeHouseMenu = new PancakeHouseMenu();
+List<MenuItem> breakfastItems = pancakeHouseMenu.GetMenuItems();
+
+DinerMenu dinerMenu = new DinerMenu();
+MenuItem[] lunchItems = dinerMenu.GetMenuItems();
+
+for (int i = 0; i < breakfastItems.Count; i++)
+{
+    MenuItem menuItem = breakfastItems.Get(i);
+    ConsoleWrite(menuItem.GetName() + " ");
+    Console.WriteLine(menuItem.GetPrice() + " ");
+    Console.WriteLine(menuItem.GetDescription());
+}
+
+for (int i = 0; i < lunchItems.Length; i++)
+{
+    MenuItem menuItem = lunchItems[i];
+    Console.Write(menuItem.GetName() + " ");
+    Console.WriteLine(menuItem.GetPrice() + " ");
+    Console.WriteLine(menuItem.GetDescription());
+}
+
+// If another restaurant with a different implementation is acquired, then we’ll have three loops.
+````
+
+````c#
+// Now what if we create an object, let’s call it an Iterator, that encapsulates the way we iterate through a collection of objects? Let’s try this on the List:
+Iterator iterator = breakfastMenu.CreateIterator();
+while (iterator.HasNext())
+{
+    MenuItem menuItem = iterator.Next();
+}
+
+// This code is exactly the same as the breakfastMenu code.
+Iterator iterator = lunchMenu.CreateIterator();
+while (iterator.HasNext())
+{
+    MenuItem menuItem = iterator.Next();
+}
+````
+
+
+
+### Iterator Pattern
+
+The Iterator Pattern is that it relies on an interface called Iterator.
+
+
+
+![](./diagrams/svg/09_01_iterator_pattern.drawio.svg)
+
+
+
+Now, once we have this interface, we can implement Iterators for any kind of collection of objects: arrays, lists, hash maps.
+
+
+
+![](./diagrams/svg/09_02_merge_iterator_diagram.drawio.svg)
+
+
+
+````c#
+public interface IIterator
+{
+    bool HasNext();
+    MenuItem Next();
+}
+
+public class DinerMenuIterator : IIterator
+{
+    private readonly MenuItem[] _items;
+    private int position = 0;
+
+    public DinerMenuIterator(MenuItem[] items)
+    {
+        _items = items;
+    }
+
+    public MenuItem Next()
+    {
+        MenuItem menuItem = _items[position++];
+        return menuItem;
+    }
+
+    public bool HasNext()
+    {
+        return position < _items.Length && _items[position] != null;
+    }
+}
+
+public class PancakeHouseMenuIterator : IIterator
+{
+    private readonly List<MenuItem> _items;
+    private int position = 0;
+
+    public PancakeHouseMenuIterator(List<MenuItem> items)
+    {
+        _items = items;
+    }
+
+    public MenuItem Next()
+    {
+        MenuItem menuItem = _items[position++];
+        return menuItem;
+    }
+
+    public bool HasNext()
+    {
+        return position < _items.Count;
+    }
+}
+````
+
+````c#
+public class DinerMenu
+{
+    private const int MAX_ITEMS = 6;
+    private int numberOfItems = 0;
+
+    private readonly MenuItem[] _menuItems;
+
+    // constructor here
+
+    // addItem here
+
+    public MenuItem[] GetMenuItems()
+    {
+        return _menuItems;
+    }
+
+    public IIterator CreateIterator()
+    {
+        return new DinerMenuIterator(_menuItems);
+    }
+
+    // other menu methods here
+}
+
+public class PancakeHouseMenu
+{
+    private int numberOfItems = 0;
+
+    private readonly List<MenuItem> _menuItems;
+
+    // constructor here
+
+    // addItem here
+
+    public List<MenuItem> GetMenuItems()
+    {
+        return _menuItems;
+    }
+
+    public IIterator CreateIterator()
+    {
+        return new PancakeHouseMenuIterator(_menuItems);
+    }
+
+    // other menu methods here
+}
+````
+
+````c#
+public class Waitress
+{
+    private readonly PancakeHouseMenu _pancakeHouseMenu;
+    private readonly DinerMenu _dinerMenu;
+    
+    public Waitress(PancakeHouseMenu pancakeHouseMenu, DinerMenu dinerMenu)
+    {
+        _pancakeHouseMenu = pancakeHouseMenu;
+        _dinerMenu = dinerMenu;
+    }
+
+    public void PrintMenu()
+    {
+        IIterator pancakeIterator = _pancakeHouseMenu.CreateIterator();
+        Console.WriteLine("MENU\n----\nBREAKFAST");
+        PrintMenu(pancakeIterator);
+        
+        IIterator dinerIterator = _dinerMenu.CreateIterator();
+        Console.WriteLine("\nLUNCH");
+        PrintMenu(dinerIterator);
+    }
+
+    private void PrintMenu(IIterator iterator)
+    {
+        while (iterator.HasNext())
+        {
+            MenuItem menuItem = iterator.Next();
+            Console.Write(menuItem.GetName() + ", ");
+            Console.Write(menuItem.GetPrice() + " -- ");
+            Console.WriteLine(menuItem.GetDescription());
+        }
+    }
+
+    // other methods here
+}
+````
+
+````c#
+public class MenuTestDrive
+{
+    static void Main(string args[])
+    {
+        PancakeHouseMenu pancakeHouseMenu = new PancakeHouseMenu();
+        DinerMenu dinerMenu = new DinerMenu();
+
+        Waitress waitress = new Waitress(pancakeHouseMenu, dinerMenu);
+        waitress.PrintMenu();
+    }
+}
+
+//MENU
+//----
+//BREAKFAST
+//K&B’s Pancake Breakfast, 2.99 -- Pancakes with scrambled eggs and toast
+//Regular Pancake Breakfast, 2.99 -- Pancakes with fried eggs, sausage
+//Blueberry Pancakes, 3.49 -- Pancakes made with fresh blueberries
+//Waffles, 3.59 -- Waffles with your choice of blueberries or strawberries
+//
+//LUNCH
+//Vegetarian BLT, 2.99 -- (Fakin’) Bacon with lettuce & tomato on whole wheat
+//BLT, 2.99 -- Bacon with lettuce & tomato on whole wheat
+//Soup of the day, 3.29 -- Soup of the day, with a side of potato salad
+//Hot Dog, 3.05 -- A hot dog, with sauerkraut, relish, onions, topped with cheese
+//Steamed Veggies and Brown Rice, 3.99 -- Steamed vegetables over brown rice
+//Pasta, 3.89 -- Spaghetti with marinara sauce, and a slice of sourdough bread
+````
+
+
+
