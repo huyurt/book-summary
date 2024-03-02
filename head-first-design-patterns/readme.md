@@ -2708,13 +2708,11 @@ while (iterator.HasNext())
 
 
 
-### Iterator Pattern
-
 The Iterator Pattern is that it relies on an interface called Iterator.
 
 
 
-![](./diagrams/svg/09_01_iterator_pattern.drawio.svg)
+![](./diagrams/svg/09_01_iterator.drawio.svg)
 
 
 
@@ -2779,7 +2777,12 @@ public class PancakeHouseMenuIterator : IIterator
 ````
 
 ````c#
-public class DinerMenu
+public interface IMenu
+{
+    IIterator CreateIterator();
+}
+
+public class DinerMenu : IMenu
 {
     private const int MAX_ITEMS = 6;
     private int numberOfItems = 0;
@@ -2803,7 +2806,7 @@ public class DinerMenu
     // other menu methods here
 }
 
-public class PancakeHouseMenu
+public class PancakeHouseMenu : IMenu
 {
     private int numberOfItems = 0;
 
@@ -2830,24 +2833,19 @@ public class PancakeHouseMenu
 ````c#
 public class Waitress
 {
-    private readonly PancakeHouseMenu _pancakeHouseMenu;
-    private readonly DinerMenu _dinerMenu;
+    private readonly List<IMenu> _menus;
     
-    public Waitress(PancakeHouseMenu pancakeHouseMenu, DinerMenu dinerMenu)
+    public Waitress(List<IMenu> menus)
     {
-        _pancakeHouseMenu = pancakeHouseMenu;
-        _dinerMenu = dinerMenu;
+        _menus = menus;
     }
 
     public void PrintMenu()
     {
-        IIterator pancakeIterator = _pancakeHouseMenu.CreateIterator();
-        Console.WriteLine("MENU\n----\nBREAKFAST");
-        PrintMenu(pancakeIterator);
-        
-        IIterator dinerIterator = _dinerMenu.CreateIterator();
-        Console.WriteLine("\nLUNCH");
-        PrintMenu(dinerIterator);
+        foreach(IMenu menu in _menus)
+        {
+            PrintMenu(menu.CreateIterator());
+        }
     }
 
     private void PrintMenu(IIterator iterator)
@@ -2870,10 +2868,12 @@ public class MenuTestDrive
 {
     static void Main(string args[])
     {
-        PancakeHouseMenu pancakeHouseMenu = new PancakeHouseMenu();
-        DinerMenu dinerMenu = new DinerMenu();
+        List<IMenu> menus = new {
+            new PancakeHouseMenu(),
+            new DinerMenu()
+        };
 
-        Waitress waitress = new Waitress(pancakeHouseMenu, dinerMenu);
+        Waitress waitress = new Waitress(menus);
         waitress.PrintMenu();
     }
 }
@@ -2896,4 +2896,336 @@ public class MenuTestDrive
 ````
 
 
+
+![](./diagrams/svg/09_03_merge_iterator_diagram_2.drawio.svg)
+
+
+
+### Iterator Pattern
+
+The Iterator Pattern provides a way to access the elements of an aggregate object sequentially without exposing its underlying representation. It relies on an interface called Iterator.
+
+The Iterator Pattern allows traversal of the elements of an aggregate without exposing the underlying implementation. It also places the task of traversal on the iterator object, not on the aggregate, which simplifies the aggregate interface and implementation, and places the responsibility where it should be.
+
+
+
+![](./diagrams/svg/09_04_iterator_pattern.drawio.svg)
+
+
+
+#### Single Responsibility Principle
+
+> A class should have only one reason to change.
+
+We know we want to avoid change in our classes because modifying code provides all sorts of opportunities for problems to creep in. Having two ways to change increases the probability the class will change in the future, and when it does, it’s going to affect two aspects of your design.
+The principle guides us to assign each responsibility to one class, and only one class. Separating responsibility in design is one of the most difficult things to do. The only way to succeed is to be diligent in examining your designs and to watch out for signals that a class is changing in more than one way as your system grows.
+
+
+
+### Composite Pattern
+
+They want to add a dessert submenu.
+Now we have to support not only multiple menus, but menus within menus.
+It would be nice if we could just make the dessert menu an element of the DinerMenu collection, but that won’t work as it is now implemented.
+
+
+
+The Composite Pattern allows you to compose objects into tree structures to represent part-whole hierarchies. Composite lets clients treat individual objects and compositions of objects uniformly.
+
+
+
+This pattern gives us a way to create a tree structure that can handle a nested group of menus and menu items in the same structure. By putting menus and items in the same structure we create a part-whole hierarchy—that is, a tree of objects that is made of parts (menus and menu items) but that can be treated as a whole, like one big über menu.
+Once we have our über menu, we can use this pattern to treat "individual objects and compositions uniformly." It means if we have a tree structure of menus, submenus, and perhaps subsubmenus along with menu items, then any menu is a “composition” because it can contain both other menus and menu items. The individual objects are just the menu items—they don’t hold other objects. Using a design that follows the Composite Pattern is going to allow us to write some simple code that can apply the same operation over the entire menu structure.
+
+
+
+The Composite Pattern allows us to build structures of objects in the form of trees that contain both compositions of objects and individual objects as nodes.
+Using a composite structure, we can apply the same operations over both composites and individual objects. In other words, in most cases we can ignore the differences between compositions of objects and individual objects.
+
+
+
+![](./diagrams/svg/09_05_tree.drawio.svg)
+
+
+
+![](./diagrams/svg/09_06_composite_pattern.drawio.svg)
+
+
+
+#### Designing Menus with Composite
+
+
+
+![](./diagrams/svg/09_07_menu_composite_diagram.drawio.svg)
+
+
+
+````c#
+public abstract class MenuComponent
+{
+    public virtual void Add(MenuComponent menuComponent)
+    {
+        throw new UnsupportedOperationException()
+    }
+
+    public virtual void Remove(MenuComponent menuComponent)
+    {
+        throw new UnsupportedOperationException();
+    }
+
+    public virtual MenuComponent GetChild(int i)
+    {
+        throw new UnsupportedOperationException();
+    }
+
+    public virtual string GetName()
+    {
+        throw new UnsupportedOperationException();
+    }
+
+    public virtual string GetDescription()
+    {
+        throw new UnsupportedOperationException();
+    }
+
+    public virtual decimal GetPrice()
+    {
+        throw new UnsupportedOperationException();
+    }
+    
+    public virtual bool IsVegetarian()
+    {
+        throw new UnsupportedOperationException();
+    }
+
+    public virtual void Print()
+    {
+        throw new UnsupportedOperationException();
+    }
+}
+
+public class MenuItem : MenuComponent
+{
+    private readonly string _name;
+    private readonly string _description;
+    private readonly bool _vegetarian;
+    private readonly decimal _price;
+
+    public MenuItem(string name, string description, bool vegetarian, decimal price)
+    {
+        _name = name;
+        _description = description;
+        _vegetarian = vegetarian;
+        _price = price;
+    }
+
+    public override string GetName()
+    {
+        return _name;
+    }
+    
+    public override string GetDescription()
+    {
+        return _description;
+    }
+
+    public override decimal GetPrice()
+    {
+        return _price;
+    }
+
+    public override bool IsVegetarian()
+    {
+        return _vegetarian;
+    }
+
+    public override void Print()
+    {
+        Console.Write(" " + GetName());
+        if (IsVegetarian())
+        {
+            Console.Write("(v)");
+        }
+        
+        Console.WriteLine(", " + GetPrice());
+        Console.WriteLine(" -- " + GetDescription());
+    }
+}
+
+public class Menu : MenuComponent
+{
+    List<MenuComponent> _menuComponents = new List<MenuComponent>();
+    private readonly string _name;
+    private readonly string _description;
+
+    public Menu(string name, string description)
+    {
+        _name = name;
+        _description = description;
+    }
+
+    public override void Add(MenuComponent menuComponent)
+    {
+        _menuComponents.Add(menuComponent);
+    }
+
+    public override void Remove(MenuComponent menuComponent)
+    {
+        _menuComponents.Remove(menuComponent);
+    }
+
+    public override MenuComponent GetChild(int i)
+    {
+        return _menuComponents[i];
+    }
+
+    public override string GetName()
+    {
+        return _name;
+    }
+
+    public override string GetDescription()
+    {
+        return _description;
+    }
+
+    public override void Print()
+    {
+        Console.Write("\n" + GetName());
+        Console.WriteLine(", " + GetDescription());
+        Console.WriteLine("---------------------");
+        
+        foreach (MenuComponent menuComponent in _menuComponents)
+        {
+            menuComponent.Print();
+        }
+    }
+}
+````
+
+````c#
+public class Waitress
+{
+    private readonly MenuComponent _allMenus;
+    
+    public Waitress(MenuComponent allMenus)
+    {
+        _allMenus = allMenus;
+    }
+
+    public void PrintMenu()
+    {
+        _allMenus.Print();
+    }
+}
+````
+
+````c#
+public class MenuTestDrive
+{
+    static void main(string args[])
+    {
+        MenuComponent pancakeHouseMenu = new Menu("PANCAKE HOUSE MENU", "Breakfast");
+        MenuComponent dinerMenu = new Menu("DINER MENU", "Lunch");
+        MenuComponent cafeMenu = new Menu("CAFE MENU", "Dinner");
+        MenuComponent dessertMenu = new Menu("DESSERT MENU", "Dessert of course!");
+
+        MenuComponent allMenus = new Menu("ALL MENUS", "All menus combined");
+        allMenus.Add(pancakeHouseMenu);
+        allMenus.Add(dinerMenu);
+        allMenus.Add(cafeMenu);
+        // add menu items here
+        dinerMenu.Add(new MenuItem("Pasta", "Spaghetti with Marinara Sauce, and a slice of sourdough bread", true, 3.89));
+        dinerMenu.Add(dessertMenu);
+        dessertMenu.Add(new MenuItem("Apple Pie", "Apple pie with a flakey crust, topped with vanilla ice cream", true, 1.59));
+        // add more menu items here
+
+        Waitress waitress = new Waitress(allMenus);
+        waitress.PrintMenu();
+    }
+}
+
+//ALL MENUS, All menus combined
+//---------------------
+//PANCAKE HOUSE MENU, Breakfast
+//---------------------
+//K&B’s Pancake Breakfast(v), 2.99
+//-- Pancakes with scrambled eggs and toast
+//Regular Pancake Breakfast, 2.99
+//-- Pancakes with fried eggs, sausage
+//Blueberry Pancakes(v), 3.49
+//-- Pancakes made with fresh blueberries, and blueberry syrup
+//Waffles(v), 3.59
+//-- Waffles with your choice of blueberries or strawberries
+//DINER MENU, Lunch
+//---------------------
+//Vegetarian BLT(v), 2.99
+//-- (Fakin’) Bacon with lettuce & tomato on whole wheat
+//BLT, 2.99
+//-- Bacon with lettuce & tomato on whole wheat
+//Soup of the day, 3.29
+//-- A bowl of the soup of the day, with a side of potato salad
+//Hot Dog, 3.05
+//-- A hot dog, with sauerkraut, relish, onions, topped with cheese
+//Steamed Veggies and Brown Rice(v), 3.99
+//-- Steamed vegetables over brown rice
+//Pasta(v), 3.89
+//-- Spaghetti with marinara sauce, and a slice of sourdough bread
+//DESSERT MENU, Dessert of course!
+//---------------------
+//Apple Pie(v), 1.59
+//-- Apple pie with a flakey crust, topped with vanilla ice cream
+//Cheesecake(v), 1.99
+//-- Creamy New York cheesecake, with a chocolate graham crust
+//Sorbet(v), 1.89
+//-- A scoop of raspberry and a scoop of lime
+//CAFE MENU, Dinner
+//---------------------
+//Veggie Burger and Air Fries(v), 3.99
+//-- Veggie burger on a whole wheat bun, lettuce, tomato, and fries
+//Soup of the day, 3.69
+//-- A cup of the soup of the day, with a side salad
+//Burrito(v), 4.29
+//-- A large burrito, with whole pinto beans, salsa, guacamole
+````
+
+
+
+| Pattern   | Description                                                  |
+| --------- | ------------------------------------------------------------ |
+| Strategy  | Encapsulates interchangeable behaviors and uses delegation to decide which one to use. |
+| Adapter   | Changes the interface of one or more classes.                |
+| Iterator  | Provides a way to traverse a collection of objects without exposing the collection’s implementation. |
+| Facade    | Simplifies the interface of a group of classes.              |
+| Composite | Clients treat collections of objects and individual objects uniformly. |
+| Observer  | Allows a group of objects to be notified when some state changes. |
+
+
+
+* An Iterator allows access to an aggregate’s elements without exposing its internal structure.
+* An Iterator takes the job of iterating over an aggregate and encapsulates it in another object.
+* When using an Iterator, we relieve the aggregate of the responsibility of supporting operations for traversing its data.
+* An Iterator provides a common interface for traversing the items of an aggregate, allowing you to use polymorphism when writing code that makes use of the items of the aggregate.
+* The Iterable interface provides a means of getting an iterator.
+* We should strive to assign only one responsibility to each class.
+* The Composite Pattern allows clients to treat composites and individual objects uniformly.
+* A Component is any object in a Composite structure. Components may be other composites or leaves.
+* There are many design tradeoffs in implementing Composite. You need to balance transparency and safety with your needs.
+
+
+
+OO Principle
+
+* A class should have only one reason to change.
+
+OO Patterns
+
+* Iterator - Provide a way to access the elements of an aggregate object sequentially without exposing its underlying representation.
+* Composite - Compose objects into tree structures to represent part-whole hierarchies. Composite lets clients treat individual objects and compositions of objects uniformly.
+
+
+
+
+
+## State Pattern
 
