@@ -3227,5 +3227,665 @@ OO Patterns
 
 
 
-## State Pattern
+## State Pattern (Gumball Machine)
+
+Gumball machines have gone high tech. That’s right, the major manufacturers have found that by putting CPUs into their candy machines, they can increase sales, monitor inventory over the network, and measure customer satisfaction more accurately.
+
+
+
+![](./diagrams/svg/10_01_gumball_machine_state_diagram.drawio.svg)
+
+
+
+How are we going to get from that state diagram to actual code?
+
+1. First, gather up your states:
+
+   ![](./diagrams/svg/10_02_gumball_machine_states.drawio.svg)
+
+
+
+2. Next, create an instance variable to hold the current state, and define values for each of the states:
+
+   ````c#
+   const static int SOLD_OUT = 0;
+   const static int NO_QUARTER = 1;
+   const static int HAS_QUARTER = 2;
+   const static int SOLD = 3;
+   
+   int state = SOLD_OUT;
+
+3. Now we gather up all the actions that can happen in the system:
+
+   * insert quarter
+   * eject quarter
+   * turn crank
+   * dispense
+
+4. Now we create a class that acts as the state machine. For each action, we create a method that uses conditional statements to determine what behavior is appropriate in each state. For instance, for the "insert quarter" action, we might write a method like this:
+
+   ````c#
+   public void InsertQuarter()
+   {
+       if (state == HAS_QUARTER)
+       {
+           Console.WriteLine("You can't insert another quarter");
+       }
+       else if (state == NO_QUARTER)
+       {
+           state = HAS_QUARTER;
+           Console.WriteLine("You inserted a quarter");
+       }
+       else if (state == SOLD_OUT)
+       {
+           Console.WriteLine("You can't insert a quarter, the machine is sold out");
+       }
+       else if (state == SOLD)
+       {
+           Console.WriteLine("Please wait, we're already giving you a gumball");
+       }
+   }
+   ````
+
+
+
+````c#
+public class GumballMachine
+{
+    private const static int SOLD_OUT = 0;
+    private const static int NO_QUARTER = 1;
+    private const static int HAS_QUARTER = 2;
+    private const static int SOLD = 3;
+
+    private int _state = SOLD_OUT;
+    private int _count = 0;
+
+    public GumballMachine(int count)
+    {
+        _count = count;
+        if (count > 0)
+        {
+            _state = NO_QUARTER;
+        }
+    }
+
+    public void InsertQuarter()
+    {
+        if (_state == HAS_QUARTER)
+        {
+            Console.WriteLine("You can't insert another quarter");
+        }
+        else if (_state == NO_QUARTER)
+        {
+            _state = HAS_QUARTER;
+            Console.WriteLine("You inserted a quarter");
+        }
+        else if (_state == SOLD_OUT)
+        {
+            Console.WriteLine("You can't insert a quarter, the machine is sold out");
+        }
+        else if (_state == SOLD)
+        {
+            Console.WriteLine("Please wait, we're already giving you a gumball");
+        }
+    }
+
+    public void EjectQuarter()
+    {
+        if (_state == HAS_QUARTER)
+        {
+            Console.WriteLine("Quarter returned");
+            _state = NO_QUARTER;
+        }
+        else if (_state == NO_QUARTER)
+        {
+            Console.WriteLine("You haven't inserted a quarter");
+        }
+        else if (_state == SOLD)
+        {
+            Console.WriteLine("Sorry, you already turned the crank");
+        }
+        else if (_state == SOLD_OUT)
+        {
+            Console.WriteLine("You can't eject, you haven't inserted a quarter yet");
+        }
+    }
+
+    public void TurnCrank()
+    {
+        if (_state == SOLD)
+        {
+            Console.WriteLine("Turning twice doesn't get you another gumball!");
+        }
+        else if (_state == NO_QUARTER)
+        {
+            Console.WriteLine("You turned but there's no quarter");
+        }
+        else if (_state == SOLD_OUT)
+        {
+            Console.WriteLine("You turned, but there are no gumballs");
+        }
+        else if (_state == HAS_QUARTER)
+        {
+            Console.WriteLine("You turned...");
+            _state = SOLD;
+            Dispense();
+        }
+    }
+
+    public void Dispense()
+    {
+        if (_state == SOLD)
+        {
+            Console.WriteLine("A gumball comes rolling out the slot");
+            _count--;
+            if (_count == 0)
+            {
+                Console.WriteLine("Oops, out of gumballs!");
+                _state = SOLD_OUT;
+            }
+            else
+            {
+                _state = NO_QUARTER;
+            }
+        }
+        else if (_state == NO_QUARTER)
+        {
+            Console.WriteLine("You need to pay first");
+        }
+        else if (_state == SOLD_OUT)
+        {
+            Console.WriteLine("No gumball dispensed");
+        }
+        else if (_state == HAS_QUARTER)
+        {
+            Console.WriteLine("You need to turn the crank");
+        }
+    }
+
+    // other methods here like toString() and refill()
+}
+````
+
+````c#
+public class GumballMachineTestDrive
+{
+    static void main(string[] args)
+    {
+        GumballMachine gumballMachine = new GumballMachine(5);
+
+        Console.WriteLine(gumballMachine);
+
+        gumballMachine.InsertQuarter();
+        gumballMachine.TurnCrank();
+
+        Console.WriteLine(gumballMachine);
+
+        gumballMachine.InsertQuarter();
+        gumballMachine.EjectQuarter();
+        gumballMachine.TurnCrank();
+
+        Console.WriteLine(gumballMachine);
+        
+        gumballMachine.InsertQuarter();
+        gumballMachine.TurnCrank();
+        gumballMachine.InsertQuarter();
+        gumballMachine.TurnCrank();
+        gumballMachine.EjectQuarter();
+
+        Console.WriteLine(gumballMachine);
+        
+        gumballMachine.InsertQuarter();
+        gumballMachine.InsertQuarter();
+        gumballMachine.TurnCrank();
+        gumballMachine.InsertQuarter();
+        gumballMachine.TurnCrank();
+        gumballMachine.InsertQuarter();
+        gumballMachine.TurnCrank();
+
+        Console.WriteLine(gumballMachine);
+    }
+}
+
+//Mighty Gumball, Inc.
+//Java-enabled Standing Gumball Model #2004
+//Inventory: 5 gumballs
+//Machine is waiting for quarter
+
+//You inserted a quarter
+//You turned...
+//A gumball comes rolling out the slot
+
+//Mighty Gumball, Inc.
+//Java-enabled Standing Gumball Model #2004
+//Inventory: 4 gumballs
+//Machine is waiting for quarter
+
+//You inserted a quarter
+//Quarter returned
+//You turned but there's no quarter
+
+//Mighty Gumball, Inc.
+//Java-enabled Standing Gumball Model #2004
+//Inventory: 4 gumballs
+//Machine is waiting for quarter
+
+//You inserted a quarter
+//You turned...
+//A gumball comes rolling out the slot
+//You inserted a quarter
+//You turned...
+//A gumball comes rolling out the slot
+//You haven't inserted a quarter
+
+//Mighty Gumball, Inc.
+//Java-enabled Standing Gumball Model #2004
+//Inventory: 2 gumballs
+//Machine is waiting for quarter
+
+//You inserted a quarter
+//You can't insert another quarter
+//You turned...
+//A gumball comes rolling out the slot
+//You inserted a quarter
+//You turned...
+//A gumball comes rolling out the slot
+//Oops, out of gumballs!
+//You can't insert a quarter, the machine is sold out
+//You turned, but there are no gumballs
+
+//Mighty Gumball, Inc.
+//Java-enabled Standing Gumball Model #2004
+//Inventory: 0 gumballs
+//Machine is sold out
+````
+
+
+
+Instead of maintaining our existing code, we’re going to rework it to encapsulate state objects in their own classes and then delegate to the current state when an action occurs.
+We’re following our design principles here, so we should end up with a design that is easier to maintain down the road. Here’s how we’re going to do it:
+
+* First, we’re going to define a State interface that contains a method for every action in the Gumball Machine.
+* Then we’re going to implement a State class for every state of the machine. These classes will be responsible for the behavior of the machine when it is in the corresponding state.
+* Finally, we’re going to get rid of all of our conditional code and instead delegate the work to the State class.
+
+
+
+````c#
+public interface IState
+{
+    void InsertQuarter();
+    void EjectQuarter();
+    void TurnCrank();
+    void Dispense();
+    void Refill();
+}
+
+public class NoQuarterState : IState
+{
+    private readonly GumballMachine _gumballMachine;
+    
+    public NoQuarterState(GumballMachine gumballMachine)
+    {
+        _gumballMachine = gumballMachine;
+    }
+    
+    public void InsertQuarter()
+    {
+        Console.WriteLine("You inserted a quarter");
+        _gumballMachine.SetState(_gumballMachine.GetHasQuarterState());
+    }
+
+    public void EjectQuarter()
+    {
+        Console.WriteLine("You haven't inserted a quarter");
+    }
+
+    public void TurnCrank()
+    {
+        Console.WriteLine("You turned, but there's no quarter");
+    }
+
+    public void Dispense()
+    {
+        Console.WriteLine("You need to pay first");
+    }
+
+    public void Refill()
+    {
+    }
+}
+
+public class HasQuarterState : IState
+{
+    private readonly Random _randomWinner = new Random();
+    private readonly GumballMachine _gumballMachine;
+    
+    public HasQuarterState(GumballMachine gumballMachine)
+    {
+        _gumballMachine = gumballMachine;
+    }
+
+    public void InsertQuarter()
+    {
+        Console.WriteLine("You can't insert another quarter");
+    }
+
+    public void EjectQuarter()
+    {
+        Console.WriteLine("Quarter returned");
+        _gumballMachine.SetState(_gumballMachine.GetNoQuarterState());
+    }
+
+    public void TurnCrank()
+    {
+        Console.WriteLine("You turned...");
+        int winner = _randomWinner.Next(10);
+        if ((winner == 0) && (_gumballMachine.GetCount() > 1))
+        {
+            _gumballMachine.SetState(_gumballMachine.GetWinnerState());
+        }
+        else
+        {
+            _gumballMachine.SetState(_gumballMachine.GetSoldState());
+        }
+    }
+
+    public void Dispense()
+    {
+        Console.WriteLine("No gumball dispensed");
+    }
+
+    public void Refill()
+    {
+    }
+}
+
+public class SoldState : IState
+{
+    //constructor and instance variables here
+    
+    public void InsertQuarter()
+    {
+        Console.WriteLine("Please wait, we're already giving you a gumball");
+    }
+
+    public void EjectQuarter()
+    {
+        Console.WriteLine("Sorry, you already turned the crank");
+    }
+
+    public void TurnCrank()
+    {
+        Console.WriteLine("Turning twice doesn't get you another gumball!");
+    }
+
+    public void Dispense()
+    {
+        _gumballMachine.ReleaseBall();
+        if (_gumballMachine.GetCount() > 0)
+        {
+            _gumballMachine.SetState(_gumballMachine.GetNoQuarterState());
+        }
+        else
+        {
+            Console.WriteLine("Oops, out of gumballs!");
+            _gumballMachine.SetState(_gumballMachine.GetSoldOutState());
+        }
+    }
+
+    public void Refill()
+    {
+    }
+}
+
+public class SoldOutState : IState
+{
+    private readonly GumballMachine _gumballMachine;
+    
+    public SoldOutState(GumballMachine gumballMachine)
+    {
+        _gumballMachine = gumballMachine;
+    }
+
+    public void InsertQuarter()
+    {
+        Console.WriteLine("You can't insert a quarter, the machine is sold out");
+    }
+
+    public void EjectQuarter()
+    {
+        Console.WriteLine("You can't eject, you haven't inserted a quarter yet");
+    }
+
+    public void TurnCrank()
+    {
+        Console.WriteLine("You turned, but there are no gumballs");
+    }
+
+    public void Dispense()
+    {
+        Console.WriteLine("No gumball dispensed");
+    }
+    
+    public void Refill()
+    {
+        _gumballMachine.SetState(_gumballMachine.GetNoQuarterState());
+    }
+}
+
+public class WinnerState : IState
+{
+    // Instance variables and constructor
+    // InsertQuarter error message
+    // EjectQuarter error message
+    // TurnCrank error message
+
+    public void Dispense()
+    {
+        _gumballMachine.ReleaseBall();
+        if (_gumballMachine.GetCount() == 0)
+        {
+            _gumballMachine.SetState(_gumballMachine.GetSoldOutState());
+        }
+        else
+        {
+            _gumballMachine.ReleaseBall();
+            Console.WriteLine("YOU'RE A WINNER! You got two gumballs for your quarter");
+            if (_gumballMachine.GetCount() > 0)
+            {
+                _gumballMachine.SetState(gumballMachine.GetNoQuarterState());
+            }
+            else
+            {
+                Console.WriteLine("Oops, out of gumballs!");
+                _gumballMachine.SetState(_gumballMachine.GetSoldOutState());
+            }
+        }
+    }
+
+    public void Refill()
+    {
+    }
+}
+````
+
+````c#
+public class GumballMachine
+{
+    private readonly IState _soldOutState;
+    private readonly IState _noQuarterState;
+    private readonly IState _hasQuarterState;
+    private readonly IState _soldState;
+    private readonly IState _winnerState;
+    
+    private IState _state;
+    private int _count = 0;
+
+    public GumballMachine(int numberGumballs)
+    {
+        _soldOutState = new SoldOutState(this);
+        _noQuarterState = new NoQuarterState(this);
+        _hasQuarterState = new HasQuarterState(this);
+        _soldState = new SoldState(this);
+        _winnerState = new WinnerState(this);
+
+        _count = numberGumballs;
+        if (numberGumballs > 0)
+        {
+            _state = noQuarterState;
+        }
+        else
+        {
+            _state = soldOutState;
+        }
+    }
+
+    public void InsertQuarter()
+    {
+        _state.InsertQuarter();
+    }
+
+    public void EjectQuarter()
+    {
+        _state.EjectQuarter();
+    }
+
+    public void TurnCrank()
+    {
+        _state.TurnCrank();
+        _state.Dispense();
+    }
+
+    private void SetState(State state)
+    {
+        _state = state;
+    }
+
+    private void ReleaseBall()
+    {
+        Console.WriteLine("A gumball comes rolling out the slot...");
+        if (_count > 0)
+        {
+            _count--;
+        }
+    }
+    
+    private void Refill(int count)
+    {
+        _count += count;
+        Console.WriteLine("The gumball machine was just refilled; its new count is: " + _count);
+        _state.Refill();
+    }
+
+    // More methods here including getters for each State...
+}
+````
+
+````c#
+public class GumballMachineTestDrive
+{
+    static void main(string[] args)
+    {
+        GumballMachine gumballMachine = new GumballMachine(5);
+
+        Console.WriteLine(gumballMachine);
+        
+        gumballMachine.InsertQuarter();
+        gumballMachine.TurnCrank();
+        
+        Console.WriteLine(gumballMachine);
+        
+        gumballMachine.InsertQuarter();
+        gumballMachine.TurnCrank();
+        gumballMachine.InsertQuarter();
+        gumballMachine.TurnCrank();
+        
+        Console.WriteLine(gumballMachine);
+    }
+}
+
+//Mighty Gumball, Inc.
+//Java-enabled Standing Gumball Model #2004
+//Inventory: 5 gumballs
+//Machine is waiting for quarter
+
+//You inserted a quarter
+//You turned...
+//A gumball comes rolling out the slot...
+//A gumball comes rolling out the slot...
+//YOU'RE A WINNER! You got two gumballs for your quarter
+
+//Mighty Gumball, Inc.
+//Java-enabled Standing Gumball Model #2004
+//Inventory: 3 gumballs
+//Machine is waiting for quarter
+
+//You inserted a quarter
+//You turned...
+//A gumball comes rolling out the slot...
+//You inserted a quarter
+//You turned...
+//A gumball comes rolling out the slot...
+//A gumball comes rolling out the slot...
+//YOU'RE A WINNER! You got two gumballs for your quarter
+//Oops, out of gumballs!
+
+//Mighty Gumball, Inc.
+//Java-enabled Standing Gumball Model #2004
+//Inventory: 0 gumballs
+//Machine is sold out
+````
+
+
+
+By structurally changing the implemention, you have:
+
+* Localized the behavior of each state into its own class.
+* Removed all the troublesome if statements that would have been difficult to maintain.
+* Closed each state for modification, and yet left the Gumball Machine open to extension by adding new state classes.
+* Created a code base and class structure that maps much more closely to the Mighty Gumball diagram and is easier to read and understand.
+
+
+
+### State Pattern
+
+The State Pattern allows an object to alter its behavior when its internal state changes. The object will appear to change its class.
+
+
+
+![](./diagrams/svg/10_03_state_pattern.drawio.svg)
+
+
+
+| Pattern         | Description                                                  |
+| --------------- | ------------------------------------------------------------ |
+| State           | Encapsulate state-based behavior and delegate behavior to the current state. |
+| Strategy        | Encapsulate interchangeable behaviors and use delegation to decide which behavior to use. |
+| Template Method | Subclasses decide how to implement steps in an algorithm.    |
+
+
+
+* The State Pattern allows an object to have many different behaviors that are based on its internal state.
+* Unlike a procedural state machine, the State Pattern represents each state as a full-blown class.
+* The Context gets its behavior by delegating to the current state object it is composed with.
+* By encapsulating each state into a class, we localize any changes that will need to be made.
+* The State and Strategy Patterns have the same class diagram, but they differ in intent.
+* The Strategy Pattern typically configures Context classes with a behavior or algorithm.
+* The State Pattern allows a Context to change its behavior as the state of the Context changes.
+* State transitions can be controlled by the State classes or by the Context classes.
+* Using the State Pattern will typically result in a greater number of classes in your design.
+* State classes may be shared among Context instances.
+
+
+
+OO Patterns
+
+* State - Allow an object to alter its behavior when its internal state changes. The object will appear to change its class.
+
+
+
+
+
+## Proxy Pattern (Monitoring)
 
