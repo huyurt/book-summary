@@ -3887,5 +3887,37 @@ OO Patterns
 
 
 
-## Proxy Pattern (Monitoring)
+## Proxy Pattern (Album Covers)
+
+The Proxy Pattern provides a surrogate or placeholder for another object to control access to it.
+
+Here are a few ways proxies control access:
+
+* As we know, a remote proxy controls access to a remote object.
+* A virtual proxy controls access to a resource that is expensive to create.
+* A protection proxy controls access to a resource based on access rights.
+
+
+
+![](./diagrams/svg/11_01_proxy_pattern.drawio.svg)
+
+
+
+First we have a Subject, which provides an interface for the RealSubject and the Proxy. Because it implements the same interface as the RealSubject, the Proxy can be substituted for the RealSubject anywhere it occurs.
+
+The RealSubject is the object that does the real work. It’s the object that the Proxy represents and controls access to.
+The Proxy holds a reference to the RealSubject. In some cases, the Proxy may be responsible for creating and destroying the RealSubject. Clients interact with the RealSubject through the Proxy. Because the Proxy and RealSubject implement the same interface (Subject), the Proxy can be substituted anywhere the Subject can be used. The Proxy also controls access to the RealSubject; this control may be needed if the Subject is running on a remote machine, if the Subject is expensive to create in some way, or if access to the subject needs to be protected in some way.
+Now that you understand the general pattern, let’s look at some other ways of using proxy beyond the Remote Proxy...
+
+
+
+### Virtual Proxy
+
+The Virtual Proxy acts as a representative for an object that may be expensive to create. The Virtual Proxy often defers the creation of the object until it is needed; the Virtual Proxy also acts as a surrogate for the object before and while it is being created. After that, the proxy delegates requests directly to the RealSubject.
+
+
+
+![](./diagrams/svg/11_02_virtual_proxy.drawio.svg)
+
+
 
