@@ -3887,7 +3887,7 @@ OO Patterns
 
 
 
-## Proxy Pattern (Album Covers)
+## Proxy Pattern
 
 The Proxy Pattern provides a surrogate or placeholder for another object to control access to it.
 
@@ -3921,3 +3921,46 @@ The Virtual Proxy acts as a representative for an object that may be expensive t
 
 
 
+* Firewall Proxy controls access to a set of network resources, protecting the subject from “bad” clients.
+* Smart Reference Proxy provides additional actions whenever a subject is referenced, such as counting the number of references to an object.
+* Caching Proxy provides temporary storage for results of operations that are expensive. It can also allow multiple clients to share the results to reduce computation or network latency.
+* Synchronization Proxy provides safe access to a subject from multiple threads.
+* Complexity Hiding Proxy hides the complexity of and controls access to a complex set of classes. This is sometimes called the Facade Proxy for obvious reasons. The Complexity Hiding Proxy differs from the Facade Pattern in that the proxy controls access, while the Facade Pattern just provides an alternative interface.
+* Copy-On-Write Proxy controls the copying of an object by deferring the copying of an object until it is required by a client. This is a variant of the Virtual Proxy.
+
+
+
+| Pattern   | Description                                                  |
+| --------- | ------------------------------------------------------------ |
+| Decorator | Wraps another object and provides additional behavior for it. |
+| Facade    | Wraps a bunch of objects to simplify their interface.        |
+| Proxy     | Wraps another object to control access to it.                |
+| Adapter   | Wraps another object and provides a different interface to it. |
+
+
+
+* The Proxy Pattern provides a representative for another object in order to control the client’s access to it. There are a number of ways it can manage that access.
+* A Remote Proxy manages interaction between a client and a remote object.
+* A Virtual Proxy controls access to an object that is expensive to instantiate.
+* A Protection Proxy controls access to the methods of an object based on the caller.
+* Many other variants of the Proxy Pattern exist including caching proxies, synchronization proxies, firewall proxies, copy-on-write proxies, and so on.
+* Proxy is structurally similar to Decorator, but the two patterns differ in their purpose.
+* The Decorator Pattern adds behavior to an object, while Proxy controls access.
+* Like any wrapper, proxies will increase the number of classes and objects in your designs.
+
+
+
+OO Patterns
+
+* Proxy - Provide a surrogate or placeholder for another object to control access to it.
+
+
+
+
+
+## Compound Patterns
+
+The more you use patterns the more you’re going to see them showing up together in your designs. We have a special name for a set of patterns that work together in a design that can be applied over many problems: a compound pattern.
+
+Patterns are often used together and combined within the same design solution.
+A compound pattern combines two or more patterns into a solution that solves a recurring or general problem.
