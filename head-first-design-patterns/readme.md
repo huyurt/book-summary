@@ -3958,9 +3958,362 @@ OO Patterns
 
 
 
-## Compound Patterns
+## Compound Patterns (MVC)
 
 The more you use patterns the more you’re going to see them showing up together in your designs. We have a special name for a set of patterns that work together in a design that can be applied over many problems: a compound pattern.
 
 Patterns are often used together and combined within the same design solution.
 A compound pattern combines two or more patterns into a solution that solves a recurring or general problem.
+
+
+
+````c#
+public interface IQuackObservable
+{
+    void RegisterObserver(Observer observer);
+    void NotifyObservers();
+}
+
+public interface IQuackable : IQuackObservable
+{
+    void Quack();
+}
+````
+
+````c#
+public class Observable : IQuackObservable
+{
+    List<Observer> observers = new List<Observer>();
+    private readonly QuackObservable _duck;
+
+    public Observable(QuackObservable duck)
+    {
+        _duck = duck;
+    }
+
+    public void RegisterObserver(Observer observer)
+    {
+        observers.Add(observer);
+    }
+    
+    public void NotifyObservers()
+    {
+        Iterator iterator = observers.Iterator();
+        while (iterator.HasNext())
+        {
+            Observer observer = iterator.Next();
+            observer.Update(_duck);
+        }
+    }
+}
+
+public interface IObserver
+{
+    void update(QuackObservable duck);
+}
+
+public class Quackologist : IObserver
+{
+    public void Update(QuackObservable duck)
+    {
+        Console.WriteLine("Quackologist: " + duck + " just quacked.");
+    }
+}
+````
+
+````c#
+public class MallardDuck : IQuackable
+{
+    private readonly Observable _observable;
+    
+    public MallardDuck()
+    {
+        _observable = new Observable(this);
+    }
+
+    public void Quack()
+    {
+        Console.WriteLine("Quack");
+        NotifyObservers();
+    }
+
+    public void RegisterObserver(Observer observer)
+    {
+        _observable.RegisterObserver(observer);
+    }
+
+    public void NotifyObservers()
+    {
+        _observable.notifyObservers();
+    }
+}
+
+public class RedheadDuck : IQuackable
+{
+    public void Quack()
+    {
+        Console.WriteLine("Quack");
+    }
+    
+    // Observer methods
+}
+
+public class DuckCall : IQuackable
+{
+    public void Quack()
+    {
+        Console.WriteLine("Kwak");
+    }
+    
+    // Observer methods
+}
+
+public class RubberDuck : IQuackable
+{
+    public void Quack()
+    {
+        Console.WriteLine("Squeak");
+    }
+    
+    // Observer methods
+}
+
+public class QuackCounter : IQuackable
+{
+    private readonly Quackable _duck;
+    
+    private static int NumberOfQuacks;
+    
+    public QuackCounter(Quackable duck)
+    {
+        _duck = duck;
+    }
+
+    public void Quack()
+    {
+        _duck.Quack();
+        NumberOfQuacks++;
+    }
+
+    public static int GetQuacks()
+    {
+        return NumberOfQuacks;
+    }
+    
+    public void RegisterObserver(Observer observer)
+    {
+        _duck.RegisterObserver(observer);
+    }
+
+    public void NotifyObservers()
+    {
+        _duck.NotifyObservers();
+    }
+}
+
+public class Flock : IQuackable
+{
+    private List<Quackable> quackers = new List<Quackable>();
+    
+    public void add(Quackable quacker)
+    {
+        quackers.Add(quacker);
+    }
+
+    public void Quack()
+    {
+        Iterator<Quackable> iterator = quackers.Iterator();
+        while (iterator.HasNext())
+        {
+            Quackable quacker = iterator.Next();
+            quacker.Quack();
+        }
+    }
+    
+    public void registerObserver(Observer observer)
+    {
+        Iterator<Quackable> iterator = ducks.Iterator();
+        while (iterator.HasNext())
+        {
+            Quackable duck = iterator.Next();
+            duck.RegisterObserver(observer);
+        }
+    }
+
+    public void NotifyObservers() { }
+}
+````
+
+````c#
+public abstract class AbstractDuckFactory
+{
+    public abstract Quackable CreateMallardDuck();
+    public abstract Quackable CreateRedheadDuck();
+    public abstract Quackable CreateDuckCall();
+    public abstract Quackable CreateRubberDuck();
+}
+
+public class DuckFactory : AbstractDuckFactory
+{
+    public Quackable CreateMallardDuck()
+    {
+        return new MallardDuck();
+    }
+
+    public Quackable CreateRedheadDuck()
+    {
+        return new RedheadDuck();
+    }
+
+    public Quackable CreateDuckCall()
+    {
+        return new DuckCall();
+    }
+
+    public Quackable CreateRubberDuck()
+    {
+        return new RubberDuck();
+    }
+}
+
+public class CountingDuckFactory : AbstractDuckFactory
+{
+    public Quackable CreateMallardDuck()
+    {
+        return new QuackCounter(new MallardDuck());
+    }
+
+    public Quackable CreateRedheadDuck()
+    {
+        return new QuackCounter(new RedheadDuck());
+    }
+
+    public Quackable CreateDuckCall()
+    {
+        return new QuackCounter(new DuckCall());
+    }
+
+    public Quackable CreateRubberDuck()
+    {
+        return new QuackCounter(new RubberDuck());
+    }
+}
+````
+
+````c#
+public class Goose
+{
+    public void Honk()
+    {
+        Console.WriteLine("Honk");
+    }
+}
+
+public class GooseAdapter : IQuackable
+{
+    private readonly Goose _goose;
+    
+    public GooseAdapter(Goose goose)
+    {
+        _goose = goose;
+    }
+
+    public void Quack()
+    {
+        _goose.Honk();
+    }
+}
+````
+
+````c#
+public class DuckSimulator
+{
+    static void Main(string[] args)
+    {
+        DuckSimulator simulator = new DuckSimulator();
+        AbstractDuckFactory duckFactory = new CountingDuckFactory();
+
+        simulator.Simulate(duckFactory);
+    }
+
+    private void Simulate(AbstractDuckFactory duckFactory)
+    {
+        Quackable redheadDuck = duckFactory.CreateRedheadDuck();
+        Quackable duckCall = duckFactory.CreateDuckCall();
+        Quackable rubberDuck = duckFactory.CreateRubberDuck();
+        Quackable gooseDuck = new GooseAdapter(new Goose());
+        
+        Console.WriteLine("\nDuck Simulator: With Composite - Flocks");
+
+        Flock flockOfDucks = new Flock();
+        
+        flockOfDucks.Add(redheadDuck);
+        flockOfDucks.Add(duckCall);
+        flockOfDucks.Add(rubberDuck);
+        flockOfDucks.Add(gooseDuck);
+        
+        Flock flockOfMallards = new Flock();
+
+        Quackable mallardOne = duckFactory.CreateMallardDuck();
+        Quackable mallardTwo = duckFactory.CreateMallardDuck();
+        Quackable mallardThree = duckFactory.CreateMallardDuck();
+        Quackable mallardFour = duckFactory.CreateMallardDuck();
+        
+        flockOfMallards.Add(mallardOne);
+        flockOfMallards.Add(mallardTwo);
+        flockOfMallards.Add(mallardThree);
+        flockOfMallards.Add(mallardFour);
+
+        flockOfDucks.Add(flockOfMallards);
+        
+        Console.WriteLine("\nDuck Simulator: Whole Flock Simulation");
+        simulate(flockOfDucks);
+
+        Console.WriteLine("\nDuck Simulator: Mallard Flock Simulation");
+        simulate(flockOfMallards);
+        
+        Console.WriteLine("\nDuck Simulator: With Observer");
+        Quackologist quackologist = new Quackologist();
+        flockOfDucks.RegisterObserver(quackologist);
+
+        Console.WriteLine("\nThe ducks quacked " + QuackCounter.GetQuacks() + " times");
+    }
+
+    private void Simulate(Quackable duck)
+    {
+        duck.Quack();
+    }
+}
+
+//Duck Simulator: With Observer
+//Quack
+//Quackologist: Redhead Duck just quacked.
+//Kwak
+//Quackologist: Duck Call just quacked.
+//Squeak
+//Quackologist: Rubber Duck just quacked.
+//Honk
+//Quackologist: Goose pretending to be a Duck just quacked.
+//Quack
+//Quackologist: Mallard Duck just quacked.
+//Quack
+//Quackologist: Mallard Duck just quacked.
+//Quack
+//Quackologist: Mallard Duck just quacked.
+//Quack
+//Quackologist: Mallard Duck just quacked.
+//The Ducks quacked 7 times.
+````
+
+* A goose came along and wanted to act like a Quackable too. So we used the Adapter Pattern to adapt the goose to a Quackable. Now, you can call quack() on a goose wrapped in the adapter and it will honk!
+* Then, the Quackologists decided they wanted to count quacks. So we used the Decorator Pattern to add a QuackCounter decorator that keeps track of the number of times quack() is called, and then delegates the quack to the Quackable it’s wrapping.
+* But the Quackologists were worried they’d forget to add the QuackCounter decorator. So we used the Abstract Factory Pattern to create ducks for them. Now, whenever they want a duck, they ask the factory for one, and it hands back a decorated duck.
+* We had management problems keeping track of all those ducks and geese and quackables. So we used the Composite Pattern to group Quackables into Flocks. The pattern also allows the Quackologist to create subFlocks to manage duck families.
+* The Quackologists also wanted to be notified when any Quackable quacked. So we used the Observer Pattern to let the Quackologists register as Quackable Observers. Now they’re notified every time any Quackable quacks. We used iterator again in this implementation. The Quackologists can even use the Observer Pattern with their composites.
+
+
+
+![](./diagrams/svg/12_01_duck_sim_compound_diagram.drawio.svg)
+
+
+
