@@ -2,6 +2,43 @@
 
 > Someone has already solved your problems.
 
+A Pattern is a solution to a problem in a context.
+
+An Anti-Pattern tells you how to go from a problem to a BAD solution.
+
+
+
+![](./diagrams/svg/00_01_design_pattern_category.drawio.svg)
+
+
+
+![](./diagrams/svg/00_02_design_pattern.drawio.svg)
+
+
+
+* Keep it simple (KISS)
+* Design Patterns aren’t a magic bullet; in fact, they’re not even a bullet!
+* You know you need a pattern when...
+* Refactoring time is Patterns time!
+* Take out what you don’t really need. Don’t be afraid to remove a Design Pattern from your design.
+* If you don’t need it now, don’t do it now.
+
+
+
+* Let Design Patterns emerge in your designs; don’t force them in just for the sake of using a pattern.
+* Design Patterns aren’t set in stone; adapt and tweak them to meet your needs.
+* Always use the simplest solution that meets your needs, even if it doesn’t include a pattern.
+* Study Design Patterns catalogs to familiarize yourself with patterns and the relationships among them.
+* Pattern classifications (or categories) provide groupings for patterns. When they help, use them.
+* You need to be committed to be a patterns writer: it takes time and patience, and you have to be willing to do lots of refinement.
+* Remember, most patterns you encounter will be adaptations of existing patterns, not new patterns.
+* Build your team’s shared vocabulary. This is one of the most powerful benefits of using patterns.
+* Like any community, the patterns community has its own lingo. Don’t let that hold you back.
+
+
+
+
+
 ## Strategy Pattern (SimUDuck App)
 
 SimUDuck is a duck pond game. The game can show a large variety of duck species swimming and making quacking sounds. The game has built with standard OO techniques and created one Duck superclass from which all other duck types inherit.
@@ -3958,7 +3995,7 @@ OO Patterns
 
 
 
-## Compound Patterns (MVC)
+## Compound Patterns
 
 The more you use patterns the more you’re going to see them showing up together in your designs. We have a special name for a set of patterns that work together in a design that can be applied over many problems: a compound pattern.
 
@@ -4314,6 +4351,50 @@ public class DuckSimulator
 
 
 ![](./diagrams/svg/12_01_duck_sim_compound_diagram.drawio.svg)
+
+
+
+### Model-View-Controller (MVC)
+
+MVC uses Observer to keep the views and controllers updated on the latest state changes. The view and the controller, on the other hand, implement the Strategy Pattern. The controller is the strategy of the view, and it can be easily exchanged with another controller if you want different behavior. The view itself also uses a pattern internally to manage the windows, buttons, and other components of the display: the Composite Pattern.
+
+
+
+| Pattern          | Description                                                  |
+| ---------------- | ------------------------------------------------------------ |
+| Decorator        | Wraps an object to provide new behavior.                     |
+| State            | Encapsulates state-based behaviors and uses delegation to switch between behaviors. |
+| Iterator         | Provides a way to traverse a collection of objects without exposing its implementation. |
+| Facade           | Simplifies the interface of a set of classes.                |
+| Strategy         | Encapsulates interchangeable behaviors and uses delegation to decide which one to use. |
+| Proxy            | Wraps an object to control access to it.                     |
+| Factory Method   | Subclasses decide which concrete classes to create.          |
+| Adapter          | Wraps an object and provides a different interface to it.    |
+| Observer         | Allows objects to be notified when state changes.            |
+| Template Method  | Subclasses decide how to implement steps in an algorithm.    |
+| Composite        | Clients treat collections of objects and individual objects uniformly. |
+| Singleton        | Ensures one and only one object is created.                  |
+| Abstract Factory | Allows a client to create families of objects without specifying their concrete classes. |
+| Command          | Encapsulates a request as an object.                         |
+
+
+
+* The Model View Controller (MVC) Pattern is a compound pattern consisting of the Observer, Strategy, and Composite Patterns.
+* The model makes use of the Observer Pattern so that it can keep observers updated yet stay decoupled from them.
+* The controller is the Strategy for the view. The view can use different implementations of the controller to get different behavior.
+* The view uses the Composite Pattern to implement the user interface, which usually consists of nested components like panels, frames, and buttons.
+* These patterns work together to decouple the three players in the MVC model, which keeps designs clear and flexible.
+* The Adapter Pattern can be used to adapt a new model to an existing view and controller.
+* MVC has been adapted to the web.
+* There are many web MVC frameworks with various adaptations of the MVC pattern to fit the client/server application structure.
+
+
+
+OO Patterns
+
+* A Compound Pattern combines two or more patterns into a solution that solves a recurring or general problem.
+
+
 
 
 
