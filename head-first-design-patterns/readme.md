@@ -4398,3 +4398,144 @@ OO Patterns
 
 
 
+## Bridge Pattern
+
+Use the Bridge Pattern to vary not only your implementations, but also your abstractions.
+
+The Bridge Pattern allows you to vary the implementation and the abstraction by placing the two in separate class hierarchies.
+
+
+
+**Scenario**
+
+Imagine you’re writing the code for a new ergonomic and user-friendly remote control for TVs. While the remote is based on the same abstraction, there will be lots of implementations—one for each model of TV.
+
+
+
+![](./diagrams/svg/13_01_remote_control.drawio.svg)
+
+
+
+You know that the remote’s user interface won’t be right the first time. In fact, you expect that the product will be refined many times as usability data is collected on the remote control.
+So your dilemma is that the remotes are going to change and the TVs are going to change. You’ve already abstracted the user interface so that you can vary the implementation over the many TVs your customers will own. But you are also going to need to vary the abstraction because it is going to change over time as the remote is improved based on the user feedback.
+
+
+
+![](./diagrams/svg/13_02_remote_control_bridge_pattern.drawio.svg)
+
+
+
+Now you have two hierarchies, one for the remotes and a separate one for platform-specific TV implementations. The bridge allows you to vary either side of the two hierarchies independently.
+
+
+
+Bridge Benefits
+
+* Decouples an implementation so that it is not bound permanently to an interface.
+* Abstraction and implementation can be extended independently.
+* Changes to the concrete abstraction classes don’t affect the client.
+
+Bridge Uses and Drawbacks
+
+* Useful in graphics and windowing systems that need to run over multiple platforms.
+* Useful any time you need to vary an interface and an implementation in different ways.
+* Increases complexity.
+
+
+
+
+
+## Builder Pattern
+
+Use the Builder Pattern to encapsulate the construction of a product and allow it to be constructed in steps.
+
+
+
+**Scenario**
+
+You’ve been asked to build a vacation planner. Guests can choose a hotel and various types of admission tickets, make restaurant reservations, and even book special events. To create a vacation planner, you need to be able to create structures like this:
+
+
+
+![](./diagrams/svg/13_03_vacation_planner.drawio.svg)
+
+
+
+Each guest’s planner can vary in the number of days and types of activities it includes. For instance, a local resident might not need a hotel, but wants to make dinner and special event reservations. Another guest might be flying into Objectville and needs a hotel, dinner reservations, and admission tickets.
+So, you need a flexible data structure that can represent guest planners and all their variations; you also need to follow a sequence of potentially complex steps to create the planner.
+
+
+
+![](./diagrams/svg/13_04_vacation_planner_builder_pattern.drawio.svg)
+
+
+
+With the iterator pattern, we encapsulated the iteration into a separate object and hid the internal representation of the collection from the client. It’s the same idea here: we encapsulate the creation of the trip planner in an object (let’s call it a builder), and have our client ask the builder to construct the trip planner structure for it.
+
+
+
+Builder Benefits
+
+* Encapsulates the way a complex object is constructed.
+* Allows objects to be constructed in a multistep and varying process (as opposed to one-step factories).
+* Hides the internal representation of the product from the client.
+* Product implementations can be swapped in and out because the client only sees an abstract interface.
+
+Builder Uses and Drawbacks
+
+* Often used for building composite structures.
+* Constructing objects requires more domain knowledge of the client than when using a Factory.
+
+
+
+
+
+## Chain of Responsibility Pattern
+
+Use the Chain of Responsibility Pattern when you want to give more than one object a chance to handle a request.
+
+
+
+**Scenario**
+
+Mighty Gumball has been getting more email than they can handle since the release of the Gumball Machine. From their own analysis they get four kinds of email: fan mail from customers that love the new 1-in-10 game, complaints from parents whose kids are addicted to the game, requests to put machines in new locations, and a fair amount of spam.
+
+All fan mail should go straight to the CEO, all complaints should go to the legal department, and all requests for new machines should go to business development. Spam should be deleted.
+
+Mighty Gumball has already written some AI detectors that can tell if an email is spam, fan mail, a complaint, or a request, but they need you to create a design that can use the detectors to handle incoming email.
+
+
+
+![](./diagrams/svg/13_05_email_type_detector.drawio.svg)
+
+
+
+With the Chain of Responsibility Pattern, you create a chain of objects to examine requests. Each object in turn examines a request and either handles it or passes it on to the next object in the chain.
+
+
+
+![](./diagrams/svg/13_06_email_type_detector_chain_of_responsibility_pattern.drawio.svg)
+
+
+
+As email is received, it is passed to the first handler: SpamHandler. If the SpamHandler can’t handle the request, it is passed on to the FanHandler. And so on...
+
+
+
+Chain of Responsibility Benefits
+
+* Decouples the sender of the request and its receivers.
+* Simplifies your object because it doesn’t have to know the chain’s structure and keep direct references to its members.
+* Allows you to add or remove responsibilities dynamically by changing the members or order of the chain.
+
+Chain of Responsibility Uses and Drawbacks
+
+* Commonly used in Windows systems to handle events like mouse clicks and keyboard events.
+* Execution of the request isn’t guaranteed; it may fall off the end of the chain if no object handles it (this can be an advantage or a disadvantage).
+* Can be hard to observe and debug at runtime.
+
+
+
+
+
+## Flyweight Pattern
