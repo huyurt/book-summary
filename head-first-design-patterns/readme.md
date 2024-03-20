@@ -4425,6 +4425,127 @@ So your dilemma is that the remotes are going to change and the TVs are going to
 
 
 
+````c#
+public interface ITV
+{
+    void On();
+    void Off();
+    void SetChannel(int channelNumber);
+}
+
+public class RCATv : ITV
+{
+    public void On()
+    {
+        Console.WriteLine("Turning ON : RCA TV");
+    }
+
+    public void Off()
+    {
+        Console.WriteLine("Turning OFF : RCA TV");
+    }
+
+    public void SetChannel(int channelNumber)
+    {
+        Console.WriteLine("Setting channel Number " + channelNumber + " on RCA TV");
+    }
+}
+
+public class SonyTv : ITV
+{
+    public void On()
+    {
+        Console.WriteLine("Turning ON : Sony TV");
+    }
+
+    public void Off()
+    {
+        Console.WriteLine("Turning OFF : Sony TV");
+    }
+
+    public void SetChannel(int channelNumber)
+    {
+        Console.WriteLine("Setting channel Number " + channelNumber + " on Sony TV");
+    }
+}
+
+public abstract class RemoteControl
+{
+    protected ITV Tv;
+    public abstract void On();
+    public abstract void Off();
+    public abstract void SetChannel(int channelNumber);
+}
+
+public class RCARemoteControl : RemoteControl
+{
+    public RCARemoteControl(ITV tv)
+    {
+        this.Tv = tv;
+    }
+    
+    public override void On()
+    {
+        Tv.On();
+    }
+    
+    public override void Off()
+    {
+        Tv.Off();
+    }
+
+    public override void SetChannel(int channelNumber)
+    {
+        Tv.SetChannel(channelNumber);
+    }
+}
+
+public class SonyRemoteControl : RemoteControl
+{
+    public SonyRemoteControl(ITV tv)
+    {
+        this.Tv = tv;
+    }
+    
+    public override void On()
+    {
+        Tv.On();
+    }
+    
+    public override void Off()
+    {
+        Tv.Off();
+    }
+
+    public override void SetChannel(int channelNumber)
+    {
+        Tv.SetChannel(channelNumber);
+    }
+}
+
+static void Main(string[] args)
+{
+    RemoteControl rcaRemoteControl = new RCARemoteControl(new RCATv());
+    rcaRemoteControl.On();
+    rcaRemoteControl.SetChannel(202);
+    rcaRemoteControl.Off();
+
+    RemoteControl sonyRemoteControl = new SonyRemoteControl(new SonyTv());
+    sonyRemoteControl.On();
+    sonyRemoteControl.SetChannel(101);
+    sonyRemoteControl.Off();
+}
+
+//Turning ON : RCA TV
+//Setting channel Number 202 on RCA TV
+//Turning OFF : RCA TV
+//Turning ON : Sony TV
+//Setting channel Number 101 on Sony TV
+//Turning OFF : Sony TV
+````
+
+
+
 Now you have two hierarchies, one for the remotes and a separate one for platform-specific TV implementations. The bridge allows you to vary either side of the two hierarchies independently.
 
 
@@ -4467,6 +4588,103 @@ So, you need a flexible data structure that can represent guest planners and all
 
 
 ![](./diagrams/svg/13_04_vacation_planner_builder_pattern.drawio.svg)
+
+
+
+````c#
+public class Client
+{
+    public void ConstructPlanner(Builder builder)
+    {
+        builder.BuildDay(date);
+        builder.AddHotel(date, "Grand Facadian");
+        builder.AddTickets("Patterns on Ice");
+        
+        Planner yourPlanner = builder.GetVacationPlanner();
+    }
+}
+
+public abstract class Builder
+{
+    public abstract void BuildDay(DateTime day);
+    public abstract void AddHotel(DateTime day, string hotel);
+    public abstract void AddReservation(string reservation);
+    public abstract void AddSpecialEvent(string specialEvent);
+    public abstract void AddTickets(string ticket);
+    public abstract Planner GetVacationPlanner();
+}
+
+public class VacationBuilder
+{
+    private readonly Planner _planner;
+    
+    public VacationBuilder()
+    {
+        _planner = new Planner();
+    }
+
+    public override void BuildDay(DateTime day)
+    {
+        _planner.Day = day;
+    }
+
+    public override void AddHotel(DateTime day, string hotel)
+    {
+        _planner.Hotel.Day = day;
+        _planner.Hotel.Name = hotel;
+    }
+
+    public override void AddReservation(string reservation)
+    {
+        _planner.Reservation = reservation;
+    }
+
+    public override void AddSpecialEvent(string specialEvent)
+    {
+        _planner.SpecialEvent.Add(specialEvent);
+    }
+
+    public override void AddTickets(string ticket)
+    {
+        _planner.Tickets.Add(ticket);
+    }
+
+    public override Planner GetVacationPlanner()
+    {
+        return _planner;
+    }
+}
+
+static void Main(string[] args)
+{
+    DateTime startDate = DateTime.Now;
+    DateTime hotelDate = DateTime.Now.AddDay(10);
+    
+    Planner day1 = new VacationBuilder()
+        .BuildDay(startDate)
+        .AddHotel(hotelDate, "Hotel 1")
+        .AddReservation("")
+        .AddTickets("Park Tickets")
+        .GetVacationPlanner();
+    
+    Planner day2 = new VacationBuilder()
+        .BuildDay(startDate)
+        .AddHotel(hotelDate, "Hotel 1")
+        .AddReservation("")
+        .AddSpecialEvent("Special Event")
+        .AddTickets("Park Tickets")
+        .GetVacationPlanner();
+    
+    Planner day3 = new VacationBuilder()
+        .BuildDay(startDate)
+        .AddHotel(hotelDate, "Hotel 2")
+        .AddReservation("")
+        .AddSpecialEvent("Special Event")
+        .AddSpecialEvent("CirqueDuPatterns")
+        .AddTickets("Park Tickets")
+        .GetVacationPlanner();
+}
+````
 
 
 
@@ -4518,6 +4736,107 @@ With the Chain of Responsibility Pattern, you create a chain of objects to exami
 
 
 
+````c#
+public abstract class Handler
+{
+    protected Handler successor;
+    
+    public void SetSuccessor(Handler successor)
+    {
+        this.successor = successor;
+    }
+    
+    public abstract void HandleRequest(Email email);
+}
+
+public class SpamHandler : Handler
+{
+    public override void HandleRequest(Email email)
+    {
+        if (email.Type == 1)
+        {
+            Console.WriteLine(this.GetType().Name + " handled request.");
+        }
+        else if (successor != null)
+        {
+            successor.HandleRequest(request);
+        }
+    }
+}
+
+public class FanHandler : Handler
+{
+    public override void HandleRequest(Email email)
+    {
+        if (email.Type == 2)
+        {
+            Console.WriteLine(this.GetType().Name + " handled request.");
+        }
+        else if (successor != null)
+        {
+            successor.HandleRequest(request);
+        }
+    }
+}
+
+public class ComplaintHandler : Handler
+{
+    public override void HandleRequest(Email email)
+    {
+        if (email.Type == 3)
+        {
+            Console.WriteLine(this.GetType().Name + " handled request.");
+        }
+        else if (successor != null)
+        {
+            successor.HandleRequest(request);
+        }
+    }
+}
+
+public class NewLocHandler : Handler
+{
+    public override void HandleRequest(Email email)
+    {
+        if (email.Type == 4)
+        {
+            Console.WriteLine(this.GetType().Name + " handled request.");
+        }
+        else if (successor != null)
+        {
+            successor.HandleRequest(request);
+        }
+    }
+}
+
+static void Main(string[] args)
+{
+    Handler spamHandler = new SpamHandler();
+    Handler fanHandler = new FanHandler();
+    Handler complaintHandler = new ComplaintHandler();
+    Handler newLocHandler = new NewLocHandler();
+
+    spamHandler.SetSuccessor(fanHandler);
+    fanHandler.SetSuccessor(complaintHandler);
+    complaintHandler.SetSuccessor(newLocHandler);
+
+    Email email = new Email(1, "to", "body");
+    spamHandler.HandleRequest(email);
+
+    Email email = new Email(2, "to", "body");
+    spamHandler.HandleRequest(email);
+
+    Email email = new Email(3, "to", "body");
+    spamHandler.HandleRequest(email);
+}
+
+//SpamHandler handled request.
+//FanHandler handled request.
+//ComplaintHandler handled request.
+````
+
+
+
 As email is received, it is passed to the first handler: SpamHandler. If the SpamHandler can’t handle the request, it is passed on to the FanHandler. And so on...
 
 
@@ -4539,3 +4858,404 @@ Chain of Responsibility Uses and Drawbacks
 
 
 ## Flyweight Pattern
+
+Use the Flyweight Pattern when one instance of a class can be used to provide many virtual instances.
+
+
+
+**Scenario**
+
+You want to add trees as objects in your new landscape design application. In your application, trees don’t really do very much; they have an X-Y location, and they can draw themselves dynamically, depending on how old they are. The thing is, a user might want to have lots and lots of trees in one of their home landscape designs. It might look something like this:
+
+
+
+![](./diagrams/svg/13_07_landspace_design.drawio.svg)
+
+
+
+The client is going to buy 1,000 seats of your application, and they’re using your software to do the landscape design for huge planned communities. After using your software for a week, your client is complaining that when they create large groves of trees, the app starts getting sluggish...
+
+
+
+What if, instead of having thousands of Tree objects, you could redesign your system so that you’ve got only one instance of Tree, and a client object that maintains the state of ALL your trees? That’s the Flyweight!
+
+
+
+![](./diagrams/svg/13_08_landspace_design_flyweight_pattern.drawio.svg)
+
+
+
+````c#
+public class Tree
+{
+    public int XCoord { get; }
+    public int YCoord { get; }
+    public int Age { get; }
+
+    public Tree(int x, int y, int age)
+    {
+        XCoord = x;
+        YCoord = y;
+        Age = age;
+    }
+
+    public void Display()
+    {
+        Console.WriteLine("Drawn a tree with position: " + XCoord + "-" + YCoord + " and " + Age "age.");
+    }
+}
+
+public class TreeManager
+{
+    private readonly List<Tree> _treeArray;
+
+    public TreeManager()
+    {
+        _treeArray = new List<Tree>();     
+    }
+
+    public void AddTrees(List<Tree> trees)
+    {
+        _treeArray.AddRange(trees);
+    }
+
+    public void DisplayTrees()
+    {
+        foreach (var tree in _treeArray)
+        {
+            tree.Display();
+        }
+    }
+}
+
+static void Main(string[] args)
+{
+    var forest = new List<Tree>();
+    forest.Add(new Tree(1, 2, 21);
+    forest.Add(new Tree(10, 20, 4);
+    forest.Add(new Tree(5, 7, 63);
+
+    TreeManager treeManager = new TreeManager();
+    treeManager.AddTrees(forest);
+    treeManager.DisplayTrees();
+}
+````
+
+
+
+Flyweight Benefits
+
+* Reduces the number of object instances at runtime, saving memory.
+* Centralizes state for many "virtual" objects into a single location.
+
+Flyweight Uses and Drawbacks
+
+* The Flyweight is used when a class has many instances, and they can all be controlled identically.
+* A drawback of the Flyweight Pattern is that once you’ve implemented it, single, logical instances of the class will not be able to behave independently from the other instances.
+
+
+
+
+
+## Interpreter Pattern
+
+Use the Interpreter Pattern to build an interpreter for a language.
+
+
+
+**Scenario**
+
+The Duck Simulator would also make a great educational tool for children to learn programming. Using the simulator, each child gets to control one duck with a simple language. Here’s an example of the language:
+
+````
+right;
+while (daylight) fly;
+quack;
+````
+
+
+
+Now, remembering how to create grammars from one of your old introductory programming classes, you write out the grammar:
+
+````
+expression ::= <command> | <sequence> | <repetition>
+sequence ::= <expression> ';' <expression>
+command ::= right | quack | fly
+repetition ::= while '(' <variable> ')'<expression>
+variable ::= [A-Z,a-z]+
+````
+
+
+
+You’ve got a grammar; now all you need is a way to represent and interpret sentences in the grammar so that the students can see the effects of their programming on the simulated ducks.
+
+
+
+When you need to implement a simple language, the Interpreter Pattern defines a class-based representation for its grammar along with an interpreter to interpret its sentences. To represent the language, you use a class to represent each rule in the language. Here’s the duck language translated into classes. Notice the direct mapping to the grammar.
+
+
+
+![](./diagrams/svg/13_09_duck_simulator_interpreter_pattern.drawio.svg)
+
+
+
+To interpret the language, call the interpret() method on each expression type. This method is passed a context which contains the input stream of the program we’re parsing and matches the input and evaluates it.
+
+
+
+Interpreter Benefits
+
+* Representing each grammar rule in a class makes the language easy to implement.
+* Because the grammar is represented by classes, you can easily change or extend the language.
+* By adding methods to the class structure, you can add new behaviors beyond interpretation, like pretty printing and more sophisticated program validation.
+
+Interpreter Uses and Drawbacks
+
+* Use Interpreter when you need to implement a simple language.
+* Appropriate when you have a simple grammar and simplicity is more important than efficiency.
+* Used for scripting and programming languages.
+* This pattern can become cumbersome when the number of grammar rules is large. In these cases a parser/compiler generator may be more appropriate.
+
+
+
+
+
+## Mediator Pattern
+
+Use the Mediator Pattern to centralize complex communications and control between related objects.
+
+
+
+**Scenario**
+
+Bob has an automated home. When Bob stops hitting the snooze button, his alarm clock tells the coffee maker to start brewing. He and other customers are always asking for lots of new features: No coffee on the weekends. Turn off the sprinkler 15 minutes before a shower is scheduled. Set the alarm early on trash days...
+
+
+
+![](./diagrams/svg/13_10_house_automation.drawio.svg)
+
+
+
+It’s getting really hard to keep track of which rules reside in which objects, and how the various objects should relate to each other.
+
+
+
+With a Mediator added to the system, all of the appliance objects can be greatly simplified:
+
+* They tell the Mediator when their state changes.
+* They respond to requests from the Mediator.
+
+Before we added the Mediator, all of the appliance objects needed to know about each other; that is, they were all tightly coupled. With the Mediator in place, the appliance objects are all completely decoupled from each other.
+The Mediator contains all of the control logic for the entire system. When an existing appliance needs a new rule, or a new appliance is added to the system, you’ll know that all of the necessary logic will be added to the Mediator.
+
+
+
+![](./diagrams/svg/13_11_house_automation_mediator_pattern.drawio.svg)
+
+
+
+Mediator Benefits
+
+* Increases the reusability of the objects supported by the Mediator by decoupling them from the system.
+* Simplifies maintenance of the system by centralizing control logic.
+* Simplifies and reduces the variety of messages sent between objects in the system.
+
+Mediator Uses and Drawbacks
+
+* The Mediator is commonly used to coordinate related GUI components.
+* A drawback of the Mediator Pattern is that without proper design, the Mediator object itself can become overly complex.
+
+
+
+
+
+## Memento Pattern
+
+Use the Memento Pattern when you need to be able to return an object to one of its previous states; for instance, if your user requests an "undo."
+
+
+
+**Scenario**
+
+Your interactive role-playing game is hugely successful, and has created a legion of addicts, all trying to get to the fabled "level 13." As users progress to more challenging game levels, the odds of encountering a game-ending situation increase. Fans who have spent days progressing to an advanced level are understandably miffed when their character gets snuffed, and they have to start all over. The cry goes out for a "save progress" command, so that players can store their game progress and at least recover most of their efforts when their character is unfairly extinguished. The "save progress" function needs to be designed to return a resurrected player to the last level she completed successfully.
+
+
+
+The Memento has two goals:
+
+* Saving the important state of a system’s key object
+* Maintaining the key object’s encapsulation
+
+Keeping the Single Responsibility Principle in mind, it’s also a good idea to keep the state that you’re saving separate from the key object. This separate object that holds the state is known as the Memento object.
+
+
+
+![](./diagrams/svg/13_12_save_game_state_memento_pattern.drawio.svg)
+
+
+
+````c#
+public class GameMemento
+{
+    private string savedGameState;
+
+    public GameMemento(string savedGameState)
+    {
+        this.savedGameState = savedGameState;
+    }
+
+    public string SavedGameState
+    {
+        get { return savedGameState; }
+    }
+}
+
+public class Client
+{
+    private string gameState;
+
+    public string GameState
+    {
+        get { return gameState; }
+        set
+        {
+            gameState = value;
+            Console.WriteLine("Game State: " + gameState);
+        }
+    }
+
+    public GameMemento SaveMemento()
+    {
+        Console.WriteLine("Saving state");
+        return new GameMemento(gameState);
+    }
+
+    public void RestoreState(GameMemento memento)
+    {
+        Console.WriteLine("Restoring state");
+        GameState = memento.SavedGameState;
+    }
+}
+
+public class MasterGameObject
+{
+    GameMemento memento;
+
+    public GameMemento Memento
+    {
+        set { memento = value; }
+        get { return memento; }
+    }
+}
+
+static void Main(string[] args)
+{
+    Client game = new Client();
+    game.GameState = "Level 1";
+
+    MasterGameObject gameObject = new MasterGameObject();
+    gameObject.Memento = game.SaveMemento();
+    
+    game.GameState = "Level 2";
+    
+    game.RestoreState(gameObject.Memento);
+}
+
+//Game State: Level 1
+//Saving state
+//Game State: Level 2
+//Restoring state
+//Game State: Level 1
+````
+
+
+
+Memento Benefits
+
+* Keeping the saved state external from the key object helps to maintain cohesion.
+* Keeps the key object’s data encapsulated.
+* Provides easy-to-implement recovery capability.
+
+Memento Uses and Drawbacks
+
+* Keeping the saved state external from the key object helps to maintain cohesion.
+* Keeps the key object’s data encapsulated.
+* Provides easy-to-implement recovery capability.
+
+
+
+
+
+## Prototype Pattern
+
+Use the Prototype Pattern when creating an instance of a given class is either expensive or complicated.
+
+
+
+**Scenario**
+
+Your interactive role-playing game has an insatiable appetite for monsters. As your heroes make their journey through a dynamically created landscape, they encounter an endless chain of foes that must be subdued. You’d like the monster’s characteristics to evolve with the changing landscape. It doesn’t make a lot of sense for bird-like monsters to follow your characters into underseas realms. Finally, you’d like to allow advanced players to create their own custom monsters.
+
+
+
+The Prototype Pattern allows you to make new instances by copying existing instances. (deserialization when you need deep copies.) A key aspect of this pattern is that the client code can make new instances without knowing which specific class is being instantiated.
+
+
+
+![](./diagrams/svg/13_13_game_object_prototype_pattern.drawio.svg)
+
+
+
+Prototype Benefits
+
+* Hides the complexities of making new instances from the client.
+* Provides the option for the client to generate objects whose type is not known.
+* In some circumstances, copying an object can be more efficient than creating a new object.
+
+Prototype Uses and Drawbacks
+
+* Prototype should be considered when a system must create new objects of many types in a complex class hierarchy.
+* A drawback to using Prototype is that making a copy of an object can sometimes be complicated.
+
+
+
+
+
+## Visitor Pattern
+
+Use the Visitor Pattern when you want to add capabilities to a composite of objects and encapsulation is not important.
+
+
+
+**Scenario**
+
+Customers who frequent the Diner and Pancake House have recently become more health conscious. They are asking for nutritional information before ordering their meals. Because both establishments are so willing to create special orders, some customers are even asking for nutritional information on a per-ingredient basis.
+
+
+
+![](./diagrams/svg/13_14_dinner_special_order.drawio.svg)
+
+
+
+"Who knows what new method we’re going to have to add next, and every time we add a new method we have to do it in two places. Plus, what if we want to enhance the base application with, say, a recipes class? Then we’ll have to make these changes in three different places..."
+
+
+
+The Visitor works hand in hand with a Traverser. The Traverser knows how to navigate to all of the objects in a Composite. The Traverser guides the Visitor through the Composite so that the Visitor can collect state as it goes. Once state has been gathered, the Client can have the Visitor perform various operations on the state. When new functionality is required, only the Visitor must be enhanced.
+
+
+
+![](./diagrams/svg/13_15_dinner_special_order_visitor_pattern.drawio.svg)
+
+
+
+Visitor Benefits
+
+* Allows you to add operations to a Composite structure without changing the structure itself.
+* Adding new operations is relatively easy.
+* The code for operations performed by the Visitor is centralized.
+
+Visitor Drawbacks
+
+* The Composite classes’ encapsulation is broken when the Visitor is used.
+* Because the traversal function is involved, changes to the Composite structure are more difficult.
