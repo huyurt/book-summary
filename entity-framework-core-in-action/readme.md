@@ -92,6 +92,7 @@ The following text provides a more detailed description of the process:
 
 
 ````c#
+// The code to read all the books and output them to the console
 public static void ListAll()
 {
     using(var db = new AppDbContext())
@@ -116,6 +117,7 @@ public static void ListAll()
 
 
 ````sql
+-- SQL command produced to read Books and Author
 SELECT [b].[BookId],
 [b].[AuthorId],
 [b].[Description],
@@ -132,6 +134,7 @@ INNER JOIN [Author] AS [a] ON
 
 
 ````c#
+// The code to update the author’s WebUrl of the book Quantum Networking
 public static void ChangeWubUrl()
 {
     Console.WriteLine("New Quantum Networking WebUrl > ");
@@ -342,3 +345,583 @@ using (var context = new EfCoreContext(options)) // Creates the all-important Ef
 
 
 At the end of this listing, you create an instance of `EfCoreContext` inside a using statement because DbContext has an IDisposable interface and therefore should be disposed after you’ve used it.
+
+
+
+### Understanding database queries
+
+````c#
+context.Books									// Application’s DbContext property access
+    .Where(p => p.Title.StartsWith("Quantum")	// A series of LINQ and/or EF Core commands
+    .ToList();									// An execute command
+// The three parts of an EF Core database query, with example code.
+````
+
+Until a final execute command is applied at the end of the sequence of LINQ commands, the LINQ is held as a series of commands in what is called an *expression tree*, which means that it hasn’t been executed on the data yet.
+
+At this point, your LINQ query will be converted to database commands and sent to the database. If you want to build high-performance database queries, you want all your LINQ commands for filtering, sorting, paging, and so on to come before you call an execute command. Therefore, your filter, sort, and other LINQ commands will be run inside the database, which improves the performance of your query.
+
+
+
+````c#
+context.Books.AsNoTracking()
+    .Where(p => p.Title.StartsWith("Quantum")).ToList();
+````
+
+This query has the EF Core’s `AsNoTracking` method added to the LINQ query. As well as making the query read-only, the `AsNoTracking` method improves the performance of the query by turning off certain EF Core features.
+
+
+
+### Loading related data
+
+You can load data in four ways: eager loading, explicit loading, select loading, and lazy loading. 
+
+You need to be aware that EF Core won’t load any relationships in an entity class unless you ask it to. This default behavior of not loading relationships is correct, because it means that EF Core minimizes the database accesses. If you want to load a relationship, you need to add code to tell EF Core to do that.
+
+
+
+#### Eager loading: Loading relationships with the primary entity class
+
+The first approach to loading related data is *eager loading*, which entails telling EF Core to load the relationship in the same query that loads the primary entity class. Eager loading is specified via two fluent methods, `Include` and `ThenInclude`. The next listing shows the loading of the first row of the Books table as an instance of the `Book` entity class and the eager loading of the single relationship, `Reviews`.
+
+
+
+````c#
+// Eager loading of first book with the corresponding Reviews relationship
+var firstBook = context.Books
+    .Include(book => book.Reviews) // Gets a collection of Review class instances, which may be an empty collection
+    .FirstOrDefault(); // Takes the first book or null if there are no books in the database
+````
+
+If you look at the SQL command that this EF Core query creates, shown in the following snippet, you’ll see two SQL commands. The first command loads the first row in the Books table. The second loads the reviews, where the foreign key, `BookId`, has the same value as the first `Books` row primary key:
+
+````sql
+SELECT "t"."BookId", "t"."Description", "t"."ImageUrl",
+	"t"."Price", "t"."PublishedOn", "t"."Publisher",
+	"t"."Title", "r"."ReviewId", "r"."BookId",
+	"r"."Comment", "r"."NumStars", "r"."VoterName"
+FROM (
+    SELECT "b"."BookId", "b"."Description", "b"."ImageUrl",
+	    "b"."Price", "b"."PublishedOn", "b"."Publisher", "b"."Title"
+    FROM "Books" AS "b"
+    LIMIT 1
+) AS "t"
+LEFT JOIN "Review" AS "r" ON "t"."BookId" = "r"."BookId"
+ORDER BY "t"."BookId", "r"."ReviewId"
+````
+
+
+
+````c#
+// Eager loading of the Book class and all the related data
+var firstBook = context.Books
+    .Include(book => book.AuthorsLink) // The first Include gets a collection of BookAuthor.
+    	.ThenInclude(bookAuthor => bookAuthor.Author) // Gets the next link—in this case, the link to the author
+    .Include(book => book.Reviews) // Gets a collection of Review class instances, which may be an empty collection
+    .Include(book => book.Tags) // Loads and directly accesses the Tags
+    .Include(book => book.Promotion) // Loads any optional PriceOffer class, if one is assigned
+    .FirstOrDefault(); // Loads any optional PriceOffer class, if one is assigned
+````
+
+`Include` followed by `ThenInclude`, is the standard way of accessing relationships that go deeper than a first-level relationship. You can go to any depth with multiple `ThenIncludes`, one after the other.
+
+If you use the direct linking of many-to-many relationships, you don’t need `ThenInclude` to load the second-level relationship because the property directly accesses the other end of the many-to-many relationship via the `Tags` property, which is of type `ICollection<Tag>`. This approach can simplify the use of a many-to-many relationship as long you don’t need some data in the linking table, such as the `Order` property in the `BookAuthor` linking entity class used to order the `Book`’s `Authors` correctly.
+
+If the relationship doesn’t exist (such as the optional `PriceOffer` class pointed to by the Promotion property in the `Book` class), `Include` doesn’t fail; it simply doesn’t load anything, or in the case of collections, it returns an empty collection (a valid collection with zero entries). The same rule applies to `ThenInclude`: if the previous `Include` or `ThenInclude` was empty, subsequent `ThenIncludes` are ignored. If you don’t `Include` a collection, it is null by default.
+
+The advantage of eager loading is that EF Core will load all the data referred to by the `Include` and `ThenInclude` in an efficient manner, using a minimum of database accesses, or *database round-trips*. This type of loading to be useful in relational updates in which I need to update an existing relationship. Also eager loading to be useful in business logic.
+The downside is that eager loading loads *all* the data, even when you don’t need part of it. The book list display, for example, doesn’t need the book description, which could be quite large.
+
+
+
+You can use the ability to sort or filter the related entities when you use the `Include` or `ThenInclude` methods. This capability is helpful if you want to load only a subset of the related data (such as only `Reviews` with five stars) and/or to order the included entities (such as ordering the `AuthorsLink` collection against the Order property). The only LINQ commands you can use in the `Include` or `ThenInclude` methods are `Where`, `OrderBy`, `OrderByDescending`, `ThenBy`, `ThenByDescending`, `Skip`, and `Take`, but those commands are all you need for sorting and filtering.
+
+````c#
+// Sorting and filtering when using Include or ThenInclude
+var firstBook = context.Books
+    .Include(book => book.AuthorsLink					// Sort example: On the eager loading of the AuthorsLink collection, you sort the
+    	.OrderBy(bookAuthor => bookAuthor.Order))		// BookAuthors so that the Authors will be in the correct order to display.
+    	.ThenInclude(bookAuthor => bookAuthor.Author)
+    .Include(book => book.Reviews						// Filter example. Here, you load only
+        .Where(review => review.NumStars == 5))			// the Reviews with a star rating of 5.
+    .Include(book => book.Promotion)
+    .First();
+````
+
+
+
+#### Explicit loading: Loading relationships after the primary entity class
+
+The second approach to loading data is *explicit loading*. After you’ve loaded the primary entity class, you can explicitly load any other relationships you want. First, it loads the `Book`; then it uses explicit-loading commands to read all the relationships.
+
+````c#
+// Explicit loading of the Book class and related data
+var firstBook = context.Books.First(); // Reads in the first book on its own
+context.Entry(firstBook)
+    .Collection(book => book.AuthorsLink).Load(); // Explicity loads the linking table, BookAuthor
+foreach (var authorLink in firstBook.AuthorsLink) // To load all the possible authors, the code has to loop through all the BookAuthor entries...
+{
+    context.Entry(authorLink) // …and load each linked Author class.
+        .Reference(bookAuthor =>
+        	bookAuthor.Author).Load();
+}
+
+context.Entry(firstBook) // Loads all the reviews
+    .Collection(book => book.Tags).Load(); // Loads the Tags
+context.Entry(firstBook) // Loads the optional PriceOffer class
+    .Reference(book => book.Promotion).Load();
+````
+
+
+
+Alternatively, explicit loading can be used to apply a query to the relationship instead of loading the relationship. You can use any standard LINQ command after the `Query` method, such as `Where` or `OrderBy`.
+
+````c#
+// Explicit loading of the Book class with a refined set of related data
+var firstBook = context.Books.First(); // Reads in the first book on its own
+var numReviews = context.Entry(firstBook) // Executes a query to count reviews for this book
+    .Collection(book => book.Reviews)
+    .Query().Count();
+var starRatings = context.Entry(firstBook) // Executes a query to get all the star ratings for the book
+    .Collection(book => book.Reviews)
+    .Query().Select(review => review.NumStars)
+    .ToList();
+````
+
+
+
+The advantage of explicit loading is that you can load a relationship of an entity class later. This technique useful when I’m using a library that loads only the primary entity class, and need one of its relationships. Explicit loading can also be useful when you need that related data in only some circumstances. You might also find explicit loading to be useful in complex business logic because you can leave the job of loading the specific relationships to the parts of the business logic that need it. The downside of explicit loading is more database round trips, which can be inefficient. If you know up front the data you need, eager loading the data is usually more efficient because it takes fewer database round trips to load the relationships.
+
+
+
+#### Select loading: Loading specific parts of primary entity class and any relationships
+
+The third approach to loading data is using the LINQ `Select` method to pick out the data you want, which calls *select loading*. The next listing shows the use of the `Select` method to select a few standard properties from the `Book` class and execute specific code inside the query to get the count of customer reviews for this book.
+
+
+
+````c#
+// Select of the Book class picking specific properties and one calculation
+var books = context.Books
+    .Select(book => new // Uses the LINQ Select keyword and creates an anonymous type to hold the results
+    	{
+            book.Title,
+            book.Price,
+            NumReviews = book.Reviews.Count, // Runs a query that counts the number of reviews
+        }
+).ToList();
+````
+
+The advantage of this approach is that only the data you need is loaded, which can be more efficient if you don’t need all the data. Only one SQL `SELECT` command is required to get all that data, which is also efficient in terms of database round trips. EF Core turns the `p.Reviews.Count` part of the query into an SQL command, so that count is done inside the database, as you can see in the following snippet of the SQL created by EF Core:
+
+````sql
+SELECT "b"."Title", "b"."Price", (
+    SELECT COUNT(*)
+    FROM "Review" AS "r"
+    WHERE "b"."BookId" = "r"."BookId") AS "NumReviews"
+FROM "Books" AS "b"
+````
+
+
+
+#### Lazy loading: Loading relationships as required
+
+*Lazy loading* makes writing queries easy, but it has a bad effect on database performance. Lazy loading does require some changes to your DbContext or your entity classes, but after you make those changes, reading is easy; if you access a navigational property that isn’t loaded, EF Core will execute a database query to load that navigational property.
+
+You can set up lazy loading in either of two ways:
+
+* Adding the Microsoft.EntityFrameworkCore.Proxies library when configuring your DbContext
+* Injecting a lazy loading method into the entity class via its constructor
+
+The first option is simple but locks you into setting up lazy loading for all the relationships. The second option requires you to write more code but allows you to pick which relationships use lazy loading.
+
+To configure the simple lazy loading approach, you must do two things:
+
+* Add the keyword `virtual` before *every* property that is a relationship.
+* Add the method `UseLazyLoadingProxies` when setting up your DbContext.
+
+So the converted Book entity type to the simple lazy loading approach would look like the following code snippet, with the virtual keyword added to the navigational properties:
+
+````c#
+public class BookLazy
+{
+    public int BookLazyId { get; set; }
+    //… Other properties left out for clarity
+
+    public virtual PriceOffer Promotion { get; set; }
+    public virtual ICollection<Review> Reviews { get; set; }
+    public virtual ICollection<BookAuthor> AuthorsLink { get; set; }
+}
+````
+
+Using the EF Core’s Proxy library has a limitation: you must make every relational property virtual; otherwise, EF Core will throw an exception when you use the DbContext.
+
+
+
+The second part is adding the EF Core’s Proxy library to the application that sets up the DbContext and then adding the `UseLazyLoadingProxies` to the configuring of the DbContext.
+
+````c#
+var optionsBuilder =
+    new DbContextOptionsBuilder<EfCoreContext>();
+optionsBuilder
+    .UseLazyLoadingProxies()
+    .UseSqlServer(connection);
+var options = optionsBuilder.Options;
+
+using (var context = new EfCoreContext(options))
+````
+
+When you have configured lazy loading in your entity classes and in the way you create the DbContext, reading relationships is simple; you don’t need extra `Include` methods in your query because the data is loaded from the database when your code accesses that relationship property.
+
+````c#
+// Lazy loading of BookLazy’s Reviews navigational property
+var book = context.BookLazy.Single(); // Gets an instance of the BookLazy entity class that has configured its Reviews property to use lazy loading
+var reviews = book.Reviews.ToList(); // When the Reviews property is accessed, EF Core will read in the reviews from the database.
+````
+
+Creates two database accesses. The first access loads the `BookLazy` data without any properties, and the second happens when you access `BookLazy`’s `Reviews` property.
+
+
+
+Many developers find lazy loading to be useful, but you can want to avoid it because of its performance issues. There is time overhead for every access to the database server, so the best approach is to minimize the number of calls to the database server. But lazy loading (and explicit loading) can create lots of database accesses, making the query slow and causing the database server to work harder.
+
+Even if you have set up a relational property for lazy loading, you can get better performance by adding an `Include` on a virtual relational property. The lazy loading will see that the property has been loaded and not load it again.
+
+
+
+### Using client vs. server evaluation: Adapting data at the last stage of a query
+
+EF Core has a feature called *client vs. server evaluation*, which allows you to run code at the last stage of the query (that is, the final `Select` part in your query) that can’t be converted to database commands. EF Core runs these non-server-runnable commands after the data has come back from the database.
+
+The client vs. server evaluation feature gives you the opportunity to adapt/change the data within the last part of the query, which can save you from having to apply an extra step after the query. You use client vs. server evaluation to create a comma-delimited list of the authors of a book. If you didn’t use client vs. server evaluation for that task, you would need to (a) send back a list of all the Author names and (b) add an extra step after the query, using a `foreach` section to apply a `string.Join` to each book’s authors.
+
+
+
+If your LINQ queries can’t be converted to database commands, EF Core will throw an `InvalidOperationException`, with a message containing the words `could not be translated`. The trouble is that you get that error only when you try that query - and you don’t want that error to happen in production!
+
+
+
+For the list display of the books in the Book App, you need to (a) extract all the authors’ names, in order, from the Authors table and (b) turn them into one string with commas between names. Here’s an example that loads two properties, `BookId` and `Title`, in the normal manner, and a third property, `AuthorsString`, that uses client vs. server evaluation.
+
+````c#
+// Select query that includes a non-SQL command, string.Join
+var firstBook = context.Books
+    .Select(book => new
+    {
+        book.BookId,
+        book.Title,
+        AuthorsString = string.Join(", ", // string.Join is executed on the client in software.
+        	book.AuthorsLink
+            .OrderBy(ba => ba.Order)
+            .Select(ba => ba.Author.Name))
+    }
+).First();
+````
+
+
+
+![](./diagrams/images/02_01_client_vs_server_evaluation.png)
+
+
+
+Using client vs. server evaluation on a property means that you cannot use that property in any LINQ command that would produce database commands, such as any commands that sort or filter that property. If you do, you will get an `InvalidOperationException`, with a message that contains the words `could not be translated`. If you tried to sort or filter on the `AuthorsString`, you would get the `could not be translated` exception.
+
+
+
+### Building complex queries
+
+You’re going to build a query to list all the books in the Book App, with a range of features including sorting, filtering, and paging.
+You could build the book display by using eager loading. First, you’d load all the data; then, in the code, you’d combine the authors, calculate the price, calculate the average votes, and so on. The problem with that approach is that (a) you are loading data you don’t need and (b) sorting and filtering have to be done in software. For this chapter’s Book App, which has approximately 50 books, you could eager-load all the books and relationships into memory and then sort or filter them in software, but that approach wouldn’t work for real!
+
+This figure is complicated because the queries needed to get all the data are complicated. With this diagram in mind, let’s look at how to build the book select query. You start with the class you’re going to put the data in. This type of class, which exists only to bring together the exact data you want, is referred to in various ways. In ASP.NET, it is referred to as a ViewModel, but that term also has other connotations and uses; therefore, we refer to this type of class as a *Data Transfer Object (DTO)*. DTOs is "object that is used to encapsulate data, and send it from one subsystem of an application to another".
+
+
+
+````c#
+// The DTO BookListDto
+public class BookListDto
+{
+    public int BookId { get; set; } // You need the primary key if the customer clicks the entry to buy the book.
+    public string Title { get; set; }
+    public DateTime PublishedOn { get; set; } // Although the publication date isn’t shown, you’ll want to sort by it, so you have to include it.
+    public decimal Price { get; set; } // The normal selling price of the book
+    public decimal ActualPrice { get; set; } // Selling price—either the normal price or the promotional.NewPrice if present
+    public string PromotionPromotionalText { get; set; } // Promotional text to show whether there’s a new price
+    public string AuthorsOrdered { get; set; } // String to hold the comma-delimited list of authors’ names
+    public int ReviewsCount { get; set; } // Number of people who reviewed the book
+    public double? ReviewsAverageVotes { get; set; } // Average of all the votes, null if no votes
+    public string[] TagStrings { get; set; } // The Tag names (that is the categories) for this book
+}
+````
+
+To work with EF Core’s select loading, the class that’s going to receive the data must have a default constructor (which you can create without providing any properties to the constructor), the class must not be static, and the properties must have public setters.
+
+Next, you’ll build a select query that fills in every property in `BookListDto`. Because you want to use this query with other query parts, such as sort, filter, and paging, you’ll use the `IQueryable<T>` type to create a method called `MapBookToDto` that takes in `IQueryable<Book>` and returns `IQueryable<BookListDto>`.
+
+````c#
+// The Select query to fill BookListDto
+public static IQueryable<BookListDto> MapBookToDto(this IQueryable<Book> books) // Takes in IQueryable<Book> and returns IQueryable<BookListDto>
+{
+    return books.Select(book => new BookListDto
+    {
+        BookId = book.BookId,
+        Title = book.Title,
+        Price = book.Price,
+        PublishedOn = book.PublishedOn,
+        ActualPrice = book.Promotion == null // Calculates the selling price, which is the normal price, or the promotion price if that relationship exists
+            ? book.Price
+            : book.Promotion.NewPrice,
+        PromotionPromotionalText = book.Promotion == null // PromotionalText depends on whether a PriceOffer exists for this book
+            ? null
+            : book.Promotion.PromotionalText,
+        AuthorsOrdered = string.Join(", ", // Obtains an array of authors’ names, in the right order. You’re using client vs. server evaluation because you want the author names combined into one string.
+        	book.AuthorsLink
+            	.OrderBy(ba => ba.Order)
+                .Select(ba => ba.Author.Name)),
+        ReviewsCount = book.Reviews.Count, // You need to calculate the number of reviews.
+        ReviewsAverageVotes = book.Reviews.Select(review => // To get EF Core to turn the LINQ average into the SQL AVG command, you need to cast the NumStars to (double?).
+        	(double?) review.NumStars).Average(),
+        TagStrings = book.Tags // Array of Tag names (categories) for this book
+            .Select(x => x.TagId).ToArray(),
+    });
+}
+````
+
+The `MapBookToDto` method uses the Query Object pattern; the method takes in `IQueryable<T>` and outputs `IQueryable<T>`, which allows you to encapsulate a query, or part of a query, in a method. That way, the query is isolated in one place, which makes it easier to find, debug, and performance-tune. You’ll use the Query Object pattern for the sort, filter, and paging parts of the query too.
+
+
+
+Query Objects are useful for building queries such as the book list in this example, but alternative approaches exist, such as the Repository pattern.
+
+
+
+The `MapBookToDto` method is also what .NET calls an *extension method*. Extension methods allow you to chain Query Objects together.
+
+
+
+A method can become an extension method if (a) it’s declared in a static class, (b) the method is static, and (c) the first parameter has the keyword `this` in front of it.
+
+
+
+Query Objects take in a `IQueryable<T1>` input and return `IQueryable<T2>`, so you’re adding LINQ commands to the original `IQueryable<T1>` input. You can add another Query Object to the end, or if you want to execute the query, add an execute command such as ToList to execute the query.
+
+
+
+### Adding sorting, filtering, and paging
+
+#### Sorting books by price, publication date, and customer ratings
+
+Sorting in LINQ is done by the methods `OrderBy` and `OrderByDescending`. You create a Query Object called `OrderBooksBy` as an extension method, as shown in the next listing. You’ll see that in addition to the `IQueryable<BookListDto>` parameter, this method takes in an enum parameter that defines the type of sort the user wants.
+
+````c#
+// The OrderBooksBy Query Object method
+public static IQueryable<BookListDto> OrderBooksBy (this IQueryable<BookListDto> books, OrderByOptions orderByOptions)
+{
+    switch (orderByOptions)
+    {
+        case OrderByOptions.SimpleOrder:
+            return books.OrderByDescending(x => x.BookId); // Because of paging, you always need to sort. You default-sort on the primary key, which is fast.
+        case OrderByOptions.ByVotes:
+            return books.OrderByDescending(x => x.ReviewsAverageVotes); // Orders the book by votes. Books without any votes (null return) go at the bottom.
+        case OrderByOptions.ByPublicationDate:
+            return books.OrderByDescending(x => x.PublishedOn); // Orders by publication date, with the latest books at the top
+        case OrderByOptions.ByPriceLowestFirst:					// Orders by actual price,
+            return books.OrderBy(x => x.ActualPrice);			// which takes into account
+        case OrderByOptions.ByPriceHighestFirst:				// any promotional price—both
+            return books.OrderByDescending(x => x.ActualPrice);	// lowest first and highest first
+        default:
+            throw new ArgumentOutOfRangeException(nameof(orderByOptions), orderByOptions, null);
+    }
+}
+````
+
+Calling the `OrderBooksBy` method returns the original query with the appropriate LINQ sort command added to the end. You pass this query on to the next Query Object, or if you’ve finished, you call a command to execute the code, such as `ToList`.
+
+Even if the user doesn’t select a sort, you’ll still sort because you’ll be using paging, providing only a page at a time rather than all the data, and SQL requires the data to be sorted to handle paging. The most efficient sort is on the primary key, so you sort on that key.
+
+
+
+#### Filtering books by publication year, categories, and customer ratings
+
+````c#
+// The code to produce a list of the years when books are published
+var result = _db.Books
+    .Where(x => x.PublishedOn <= DateTime.UtcNow.Date)
+    .Select(x => x.PublishedOn.Year)
+    .Distinct() // The Distinct method returns a list of each year a book was published.
+    .OrderByDescending(x => x.PublishedOn) // Orders the published. years, with newest year at the top
+    .Select(x => new DropdownTuple // Use two client/server evaluations to turn the values into strings.
+    {
+        Value = x.ToString(),
+        Text = x.ToString()
+    }).ToList();
+var comingSoon = _db.Books.
+    Any(x => x.PublishedOn > DateTime.Today); // Returns true if a book in the list is not yet published
+if (comingSoon) // Adds a "coming soon" filter for all the future books
+{
+    result.Insert(0, new DropdownTuple
+    {
+        Value = BookListDtoFilter.AllBooksNotPublishedString,
+        Text = BookListDtoFilter.AllBooksNotPublishedString
+    });
+}
+
+return result;
+````
+
+The result of this code is a list of `Value/Text` pairs holding each year that books are published, plus a Coming Soon section for books yet to be published.
+
+
+
+````c#
+// The FilterBooksBy Query Object method
+public static IQueryable<BookListDto> FilterBooksBy(this IQueryable<BookListDto> books, BooksFilterBy filterBy, string filterValue) // The method is given both the type of filter and the user-selected filter value.
+{
+    if (string.IsNullOrEmpty(filterValue)) // If the filter value isn’t set, returns IQueryable with no change
+    {
+        return books;
+    }
+    
+    switch (filterBy)
+    {
+        case BooksFilterBy.NoFilter: // For no filter selected, returns IQueryable with no change
+            return books;
+        case BooksFilterBy.ByVotes:
+            var filterVote = int.Parse(filterValue); // The filter by votes returns only books with an average vote above the filterVote value. If there are no reviews for a book, the ReviewsAverageVotes property will be null, and the test always returns false.
+            return books.Where(x => x.ReviewsAverageVotes > filterVote);
+        case BooksFilterBy.ByTags: // Selects any books with a Tag category that matches the filterValue
+            return books.Where(x => x.TagStrings.Any(y => y == filterValue));
+        case BooksFilterBy.ByPublicationYear:
+            if (filterValue == AllBooksNotPublishedString) // If Coming Soon was picked, returns only books not yet published
+            {
+                return books.Where(x => x.PublishedOn > DateTime.UtcNow);
+            }
+            var filterYear = int.Parse(filterValue); // If we have a specific year, we filter on that. Note that we also remove future books (in case the user chose this year’s date).
+            return books.Where(x => x.PublishedOn.Year == filterYear&& x.PublishedOn <= DateTime.UtcNow);
+        default:
+            throw new ArgumentOutOfRangeException(nameof(filterBy), filterBy, null);
+    }
+}
+````
+
+
+
+#### Other filtering options: Searching text for a specific string
+
+We could’ve created loads of other types of filters/searches of books, and searching by title is an obvious one. But you want to make sure that the LINQ commands you use to search a string are executed in the database, because they’ll perform much better than loading all the data and filtering in software. EF Core converts the following C# code in a LINQ query to a database command: `==`, `Equal`, `StartsWith`, `EndsWith`, `Contains`, and `IndexOf`.
+
+| String command | Example                                                      |
+| -------------- | ------------------------------------------------------------ |
+| StartsWith     | var books = context.Books.Where(p => p.Title.StartsWith("The")).ToList(); |
+| EndsWith       | var books = context.Books.Where(p => p.Title.EndsWith("MAT.")).ToList(); |
+| Contains       | var books = context.Books.Where(p => p.Title.Contains("cat")) |
+
+The other important thing to know is that the case sensitivity of a string search executed by SQL commands depends on the type of database, and in some databases, the rule is called `collation`. A default SQL Server database default collation uses case-insensitive searches, so searching for `Cat` would find `cat` and `Cat`. Many SQL databases are `case-insensitive` by default, but Sqlite has a mix of `case-sensitive`/`case-insensitive`, and Cosmos DB is by default `case-sensitive`.
+
+
+
+Typically, you configure the collation for the database or a specific column, but you can also define the collation in a query by using the `EF.Functions.Collate` method. The following code snippet sets an SQL Server collation, which means that this query will compare the string using the `Latin1_General_CS_AS` (`case-sensitive`) collation for this query:
+
+````c#
+context.Books.Where( x =>
+	EF.Functions.Collate(x.Title, "Latin1_General_CS_AS") == "HELP" //This does not match "help"
+````
+
+
+
+Another string command is the SQL command `LIKE`, which you can access through the `EF.Function.Like` method. This command provides a simple pattern-matching approach using _ (underscore) to match any letter and % to match zero-to-many characters. The following code snippet would match "The Cat sat on the mat." and "The dog sat on the step." but not "The rabbit sat on the hutch." because rabbit isn’t three letters long:
+
+````c#
+var books = context.Books
+    .Where(p => EF.Functions.Like(p.Title, "The ___ sat on the %."))
+    .ToList();
+````
+
+
+
+#### Paging the books in the list
+
+````c#
+// A generic Page Query Object method
+public static IQueryable<T> Page<T>(this IQueryable<T> query, int pageNumZeroStart, int pageSize)
+{
+    if (pageSize == 0)
+    {
+        throw new ArgumentOutOfRangeException(nameof(pageSize), "pageSize cannot be zero.");
+    }
+
+    if (pageNumZeroStart != 0)
+    {
+        query = query.Skip(pageNumZeroStart * pageSize); // Skips the correct number of pages
+    }
+
+    return query.Take(pageSize); // Takes the number for this page size
+}
+````
+
+
+
+Paging works only if the data is ordered. Otherwise, SQL Server will throw an exception because relational databases don’t guarantee the order in which data is handed back; there’s no default row order in a relational database.
+
+
+
+### Putting it all together: Combining Query Objects
+
+The benefit of building a complex query in separate parts is that this approach makes writing and testing the overall query simpler, because you can test each part on its own.
+
+
+
+````c#
+// The ListBookService class providing a sorted, filtered, and paged list
+public class ListBooksService
+{
+    private readonly EfCoreContext _context;
+
+    public ListBooksService(EfCoreContext context)
+    {
+        _context = context;
+    }
+
+    public IQueryable<BookListDto> SortFilterPage(SortFilterPageOptions options)
+    {
+        var booksQuery = _context.Books // Starts by selecting the Books property in the Application’s DbContext
+            .AsNoTracking() // Because this query is readonly, you add .AsNoTracking.
+            .MapBookToDto() // Uses the Select Query Object, which picks out/calculates the data it needs
+            .OrderBooksBy(options.OrderByOptions) // Adds the commands to order the data by using the given options
+            .FilterBooksBy(options.FilterBy, options.FilterValue); // Adds the commands to filter the data
+
+        options.SetupRestOfDto(booksQuery); // This stage sets up the number of pages and makes sure that PageNum is in the right range.
+
+        return booksQuery.Page(options.PageNum-1, options.PageSize); // Applies the paging commands
+    }
+}
+````
+
+
+
+### Summary
+
+* To access a database in any way via EF Core, you need to define an application DbContext.
+* An EF Core query consists of three parts: the application’s DbContext property, a series of LINQ/EF Core commands, and a command to execute the query.
+* Using EF Core, you can model three primary database relationships: `one-to-one`, `one-to-many`, and `many-to-many`, and others.
+* The classes that EF Core maps to the database are referred to as *entity classes*. We use this term to highlight the fact that the class I’m referring to is mapped by EF Core to the database.
+* If you load an entity class, it won’t load any of its relationships by default. Querying the `Book` entity class, for example, won’t load its relationship properties (`Reviews`, `AuthorsLink`, and `Promotion`); it leaves them as `null`.
+* You can load related data that’s attached to an entity class in four ways: eager loading, explicit loading, select loading, and lazy loading.
+* EF Core’s client vs. server evaluation feature allows the last stage of a query to contain commands, such as `string.Join`, that can’t be converted to SQL commands.
+* We use the term *Query Object* to refer to an encapsulated query or a section of a query. These Query Objects are often built as .NET extension methods, which means that they can easily be chained together, similar to the way LINQ is written.
+* Selecting, sorting, filtering, and paging are common query uses that can be encapsulated in a Query Object.
+* If you write your LINQ queries carefully, you can move the aggregate calculations, such as `Count`, `Sum`, and `Average`, into the relational database, improving performance.
+
+
+
+
+
+## 3. Changing the database content
+
+* Creating a new row in a database table
+* Updating existing rows in a database table for two types of applications
+* Updating entities with one-to-one, one-to-many, and many-to-many relationships
+* Deleting single entities, and entities with relationships, from a database
+
+
+
