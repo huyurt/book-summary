@@ -916,7 +916,7 @@ public class ListBooksService
 
 
 
-## 3. Changing the database content
+## 3. Changing The Database Content
 
 * Creating a new row in a database table
 * Updating existing rows in a database table for two types of applications
@@ -925,3 +925,488 @@ public class ListBooksService
 
 
 
+### EF Core’s entity State
+
+Any entity class instance has a `State`, which can be accessed via the following EF Core command: `context.Entry(someEntityInstance).State`. The State tells EF Core what to do with this instance when `SaveChanges` is called. Here’s a list of the possible states and what happens if `SaveChanges` is called:
+
+* `Added` - The entity needs to be created in the database. `SaveChanges` inserts it.
+* `Unchanged` - The entity exists in the database and hasn’t been modified on the client. `SaveChanges` ignores it.
+* `Modified` - The entity exists in the database and has been modified on the client. `SaveChanges` updates it.
+* `Deleted` - The entity exists in the database but should be deleted. `SaveChanges` deletes it.
+* `Detached` - The entity you provided isn’t tracked. `SaveChanges` doesn’t see it.
+
+Normally, you don’t look at or alter the `State` directly. You use the various commands listed in this chapter to add, update, or delete entities. These commands make sure the `State` is set in a *tracked entity*. When `SaveChanges` is called, it looks at all the tracked entities and their `State` to decide what type of database changes it needs to apply to the database.
+
+`Tracked` entities are entity instances that have been read in from the database by using a query that didn’t include the `AsNoTracking` method. Alternatively, after an entity instance has been used as a parameter to EF Core methods (such as `Add`, `Update`, or `Delete`), it becomes tracked.
+
+
+
+### Creating new rows in a table
+
+````c#
+// An example of creating a single entity
+var itemToAdd = new ExampleEntity
+{
+    MyMessage = "Hello World"
+};
+context.Add(itemToAdd); // Uses the Add method to add SingleEntity to the application’s DbContext. The DbContext determines the table to add it to, based on its parameter type.
+context.SaveChanges(); // Calls the SaveChanges method from the application’s DbContext to update the database
+````
+
+Because you add the entity instance `itemToAdd` that wasn’t originally tracked, EF Core starts to track it and sets its `State` to Added. After `SaveChanges` is called, EF Core finds a tracked entity of type `ExampleEntity` with a `State` of `Added`, so it’s added as a new row in the database table associated with the `ExampleEntity` class.
+
+EF Core creates the SQL command to update an SQL Server–based database.
+
+````sql
+-- SQL commands created to insert a new row into the SingleEntities table
+SET NOCOUNT ON;
+-- Inserts (creates) a new row into the ExampleEntities table
+INSERT INTO ExampleEntities]
+	([MyMessage]) VALUES (@p0);
+
+-- Reads back the primary key in the newly created row
+SELECT [ExampleEntityId] 
+FROM [ExampleEntities]
+WHERE @@ROWCOUNT = 1 AND
+	[ExampleEntityId] = scope_identity();
+````
+
+The second SQL command produced by EF Core reads back the primary key of the row that was created by the database server. This command ensures that the original `ExampleEntity` instance is updated with the primary key so that the in-memory version of the entity is the same as the version in the database. Reading back the primary key is important, as you might update the entity later, and the update will need the primary key.
+
+
+
+````c#
+// Adding a Book entity class also adds any linked entity classes
+var book = new Book
+{
+    Title = "Test Book",
+    PublishedOn = DateTime.Today,
+    Reviews = new List<Review>() // Creates a new collection of reviews
+    {
+        new Review // Adds one review with its content
+        {
+            NumStars = 5,
+            Comment = "Great test book!",
+            VoterName = "Mr U Test"
+        }
+    }
+};
+
+context.Add(book); // Uses the Add method to add the book to the application’s DbContext property, Books
+context.SaveChanges(); // Calls the SaveChanges method from the application’s DbContext to update the database. It finds a new Book, which has a collection containing one new Review, and then adds both to the database.
+````
+
+
+
+![](./diagrams/svg/03_01_adding_entity_with_linked_entity.drawio.svg)
+
+
+
+**WHAT HAPPENS AFTER THE SAVECHANGES RETURNS SUCCESSFULLY?**
+When the `Add` and `SaveChanges` have finished successfully, a few things happen: the entity instances that have been inserted into the database are now tracked by EF Core, and their `State` is set to `Unchanged`. Because we are using a relational database, and because the two entity classes, `Book` and `Review`, have primary keys that are of type `int`, EF Core by default will expect the database to create the primary keys by using the SQL `IDENTITY` keyword. Therefore, the SQL commands created by EF Core read back the primary keys into the appropriate primary keys in the entity class instances to make sure that the entity classes match the database.
+
+EF Core can detect any subsequent changes you make to the primary or foreign keys if you call `SaveChanges` again.
+
+
+
+**Why you should call SaveChanges only once at the end of your changes**
+You see that the `SaveChanges` method is called at the end of create, and you see the same pattern - the `SaveChanges` method is called at the end in the update and delete examples too. In fact, even for complex database change containing a mixture of creates, updates, and deletes, you should still call the `SaveChanges` method only once at the end. You do that because EF Core will save all your changes (creates, updates and deletes) and apply them to the database together, and if the database rejects any of your changes, all your changes are rejected (by means of a database feature called a transaction).
+
+This pattern is called a `Unit Of Work` and means that your database changes can’t be half-applied to the database. If you created a new `Book` with a `BookAuthor` reference to an `Author` that wasn’t in the database, for example, you wouldn’t want the `Book` instance to be saved. Saving it might break the book display, which expects every `Book` to have at least one `Author`.
+
+
+
+**EXAMPLE THAT HAS ONE INSTANCE ALREADY IN THE DATABASE**
+
+````c#
+// Adding a Book with an existing Author
+var foundAuthor = context.Authors
+    .SingleOrDefault(author => author.Name == "Mr. A"); // Reads in the Author with a check that the Author was found
+if (foundAuthor == null)
+{
+    throw new Exception("Author not found");
+}
+
+var book = new Book
+{
+    Title = "Test Book",
+    PublishedOn = DateTime.Today
+};
+book.AuthorsLink = new List<BookAuthor> // Adds an AuthorBook linking entry, but uses the Author that is already in the database
+{
+    new BookAuthor
+    {
+        Book = book,
+        Author = foundAuthor
+    }
+};
+
+context.Add(book); // Adds the new Book to the DbContext Books property and calls SaveChanges
+context.SaveChanges();
+````
+
+
+
+The first four lines load an `Author` entity with some checks to make sure that it was found; this `Author` class instance is tracked, so EF Core knows that it is already in the database. You create a new `Book` entity and add a new `BookAuthor` linking entity, but instead of creating a new `Author` entity instance, you use the `Author` entity that you read in from the database. Because EF Core is tracking the `Author` instance and knows that it’s in the database, EF Core won’t try to add it again to the database when `SaveChanges` is called at the end.
+
+
+
+### Updating database rows
+
+Updating a database row is achieved in three stages:
+
+1. Read the data (database row), possibly with some relationships.
+2. Change one or more properties (database columns).
+3. Write the changes back to the database (update the row).
+
+
+
+````c#
+// Updating Quantum Networking’s publication date
+var book = context.Books
+    .SingleOrDefault(p => p.Title == "Quantum Networking");
+if (book == null)
+{
+throw new Exception("Book not found");
+}
+
+book.PublishedOn = new DateTime(2029, 1, 1);
+context.SaveChanges(); // Calls SaveChanges, which includes running a method called DetectChanges. This method spots that the PublishedOn property has been changed.
+````
+
+When the `SaveChanges` method is called, it runs a method called `DetectChanges`, which compares the tracking snapshot against the entity class instance that it handed to the application when the query was originally executed. From this example, EF Core decides that only the `PublishedOn` property has been changed, and EF Core builds the SQL to update that property.
+
+````sql
+-- SQL generated by EF Core for the query and update
+SELECT TOP(2) -- Reads up to two rows from the Books table. You asked for a single item, but this code makes sure that it fails if more than one row fits.
+	[p].[BookId],
+	[p].[Description],
+	[p].[ImageUrl],
+	[p].[Price],
+	[p].[PublishedOn],
+	[p].[Publisher],
+	[p].[Title]
+FROM [Books] AS [p]
+WHERE [p].[Title] = N'Quantum Networking' -- Your LINQ Where method, which picks out the correct row by its title
+
+SET NOCOUNT ON;
+UPDATE [Books] -- SQL UPDATE command-in this case, on the Books table
+	SET [PublishedOn] = @p0 -- Because EF Core’s DetectChanges method finds that only the PublishedOn property has changed, it can target that column in the table.
+WHERE [BookId] = @p1; -- EF Core uses the primary key from the original book to uniquely select the row it wants to update.
+SELECT @@ROWCOUNT; -- Sends back the number of rows that were inserted into this transaction. SaveChanges returns this integer, but normally, you can ignore it.
+````
+
+
+
+#### Handling disconnected updates in a web application
+
+An update is a three-stage process, needing a read, an update, and a `SaveChanges` call to be executed by the same instance of the application’s DbContext. The problem is that for certain applications, such as websites and RESTful APIs, using the same instance of the application’s DbContext isn’t possible because in web applications, each HTTP request typically is a new request, with no data held over from the last HTTP request. In these types of applications, an update consists of two stages:
+
+* The first stage is an initial read, done in one instance of the application’s DbContext.
+* The second stage applies the update by using a new instance of the application’s DbContext.
+
+In EF Core, this type of update is called a *disconnected* update because the first stage and the second stage use two different instances of the application’s DbContext. Here are the two main ways of handling disconnected updates:
+
+* *You send only the data you need to update back from the first stage.* If you were updating the published date for a book, you would send back only the `BookId` and the `PublishedOn` properties. In the second stage, you use the primary key to reload the original entity with tracking and update the specific properties you want to change. In this example, the primary key is the `BookId`, and the property to update is the `PublishedOn` property of the `Book` entity. When you call `SaveChanges`, EF Core can work out which properties you’ve changed and update only those columns in the database.
+* You send all the data needed to re-create the entity class back from the first stage. In the second stage, you rebuild the entity class, and maybe relationships, by using the data from the first stage and tell EF Core to update the whole entity. When you call `SaveChanges`, EF Core will know, because you told it, that it must update all the columns in the table row(s) affected with the substitute data that the first stage provided.
+
+
+
+**DISCONNECTED UPDATE, WITH RELOAD**
+
+For web applications, the approach of returning only a limited amount of data to the web server is a common way of handling EF Core updates. This approach makes the request faster, but a big reason for it is security. You wouldn’t want the `Price` of a `Book` to be returned, for example, as that information would allow hackers to alter the price of the book they want to buy. We prefer, is to use a special class that contains only properties that should be sent/received.
+
+
+
+````c#
+// ChangePubDateDto sends data to and receives it from the user
+public class ChangePubDateDto
+{
+    public int BookId { get; set; } // Holds the primary key of the row you want to update, which makes finding the right row quick and accurate
+    
+    public string Title { get; set; } // You send over the title to show the user so that they can be sure they are altering the right book.
+    
+    [DataType(DataType.Date)] // The property you want to alter. You send out the current publication date and get back the changed publication date.
+    public DateTime PublishedOn { get; set; }
+}
+````
+
+````c#
+// The ChangePubDateService class to handle the disconnected update
+public class ChangePubDateService : IChangePubDateService
+{
+    private readonly EfCoreContext _context;
+    
+    public ChangePubDateService(EfCoreContext context)
+    {
+        _context = context;
+    }
+
+    public ChangePubDateDto GetOriginal(int id)
+    {
+        return _context.Books
+            .Select(p => new ChangePubDateDto
+            {
+                BookId = p.BookId,
+                Title = p.Title,
+                PublishedOn = p.PublishedOn
+            })
+            .Single(k => k.BookId == id);
+    }
+
+    public Book UpdateBook(ChangePubDateDto dto)
+    {
+        var book = _context.Books.SingleOrDefault(
+            x => x.BookId == dto.BookId);
+        if (book == null)
+        {
+            throw new ArgumentException("Book not found");
+        }
+
+        book.PublishedOn = dto.PublishedOn;
+        _context.SaveChanges();
+        return book;
+    }
+}
+````
+
+The advantages of this reload-then-update approach is that it’s more secure (in our example, sending/returning the price of the book over HTTP would allow someone to alter it) and faster because of less data. The downside is that you have to write code to copy over the specific properties you want to update.
+
+
+
+*The quickest way to read an entity class using its primary key(s)*
+Two useful things about the `Find` method:
+
+* The `Find` method checks the current application’s DbContext to see whether the required entity instance has already been loaded, which can save an access to the database. But if the entity isn’t in the application’s DbContext, the load will be slower because of this extra check.
+* The `Find` method is simpler and quicker to type because it’s shorter than the `SingleOrDefault` version, such as `context.Find<Book>(key)` versus `context.SingleOrDefault(p => p.Bookid == key)`.
+
+The upside of using the `SingleOrDefault` method is that you can add it to the end of a query with methods such as `Include`, which you can’t do with `Find`. Also `SingleOrDefault` is faster than `Find`.
+
+
+
+**DISCONNECTED UPDATE, SENDING ALL THE DATA**
+
+In some cases, all the data may be sent back, so there’s no reason to reload the original data. This can happen for simple entity classes, in some RESTful APIs, or process-to-process communication. A lot depends on how closely the given API format matches the database format and how much you trust the other system.
+
+
+
+````c#
+// Simulating an update/replace request from an external system
+string json;
+using (var context = new EfCoreContext(options)) // Simulates an external system returning a modified Author entity class as a JSON string
+{
+    var author = context.Books
+        .Where(p => p.Title == "Quantum Networking")
+        .Select(p => p.AuthorsLink.First().Author)
+        .Single();
+    author.Name = "Future Person 2";
+    json = JsonConvert.SerializeObject(author);
+}
+using (var context = new EfCoreContext(options))
+{
+    var author = JsonConvert
+        .DeserializeObject<Author>(json); // Simulates receiving a JSON string from an external system and decoding it into an Author class
+    
+    context.Authors.Update(author); // Update command, which replaces all the row data for the given primary key—in this case, AuthorId
+    context.SaveChanges(); // Provides a link to the many-tomany linking table that links to the authors of this book
+}
+````
+
+
+
+You call the EF Core Update command with the `Author` entity instance as a parameter, which marks as modified all the properties of the `Author` entity. When the `SaveChanges` command is called, it’ll update all the columns in the row that have the same primary key as the entity class.
+
+The plus side of this approach is that the database update is quicker, because you don’t have the extra read of the original data. You also don’t have to write code to copy over the specific properties you want to update, which you did need to do in the previous approach.
+
+The downsides are that more data can be transferred and that unless the API is carefully designed, it can be difficult to reconcile the data you receive with the data already in the database. Also, you’re trusting the external system to remember all the data correctly, especially the primary keys of your system.
+
+
+
+### Handling relationships in updates
+
+````c#
+// The Book entity class, showing the relationships to update
+public class Book // Book class contains the main book information.
+{
+    public int BookId { get; set; }
+    //… other nonrelational properties removed for clarity
+    //-----------------------------------------------
+    //relationships
+
+    public PriceOffer Promotion { get; set; } // Links to the optional PriceOffer
+    public ICollection<Review> Reviews { get; set; } // Can be zero to many reviews of the book
+    public ICollection<Tag> Tags { get; set; } // EF Core's automatic many-to-many relationship to the Tag entity class
+    public ICollection<BookAuthor> AuthorsLink { get; set; } // Provides a link to the many-to-many linking table that links to the authors of this book
+}
+````
+
+
+
+#### Principal and dependent relationships
+
+The terms principal and dependent are used in EF to define parts of a relationship:
+
+* *Principal entity* - Contains a primary key that the dependent relationship refer to via a foreign key
+* *Dependent entity* - Contains the foreign key that refers to the principal entity’s primary key
+
+
+
+**CAN THE DEPENDENT PART OF A RELATIONSHIP EXIST WITHOUT THE PRINCIPAL?**
+
+The other aspect of a dependent relationship is whether it can exist on its own. If the principal relationship is deleted, is there a business case for the dependent relationship to still exist? In many cases, the dependent part of a relationship doesn’t make sense without the principal relationship. A book review has no meaning if the book it links to is deleted from the database, for example.
+
+In a few cases, a dependent relationship should exist even if the principal part is deleted. Suppose that you want to have a log of all the changes that happen to a book in its lifetime. If you delete a book, you wouldn’t want that set of logs to be deleted too.
+
+This task is handled in databases by handling the nullability of the foreign key. If the foreign key in the dependent relationship is non-nullable, the dependent relationship can’t exist without the principal. In the example Book App database, the `PriceOffer`, `Review`, and `BookAuthor` entities are all dependent on the principal, Book entity, so their foreign keys are of type int. If the book is deleted or the link to the book is removed, the dependent entities will be deleted.
+
+But if you define a class for logging - let’s call it `BookLog` - you want this class to exist even if the book is deleted. To make this happen, you’d make its `BookId` foreign key of type `Nullable<int>`. Then, if you delete the book that the `BookLog` entity is linked to, you could configure that the `BookLog`’s `BookId` foreign key would be set to `null`.
+
+What happens to the old relationships we remove depends on the nullability of the foreign key: if the foreign key is non-nullable, the dependent relationships are deleted, and if the foreign key is nullable, it’s set to `null`.
+
+
+
+#### Updating one-to-one relationships
+
+In our example Book App database, we have an optional, dependent relationship property called `Promotion` from the `Book` entity class to the `PriceOffer` entity class.
+
+````c#
+// PriceOffer entity class, showing the foreign key back to the Book entity
+public class PriceOffer // PriceOffer, if present, is designed to override the normal price.
+{
+    public int PriceOfferId { get; set; }
+    public decimal NewPrice { get; set; }
+    public string PromotionalText { get; set; }
+    
+    //-----------------------------------------------
+    //Relationships
+    
+    public int BookId { get; set; } // Foreign key back to the book it should be applied to
+}
+````
+
+
+
+**CONNECTED STATE UPDATE**
+
+The connected state update assumes that you’re using the same context for both the read and the update.
+
+
+
+1. Load the `Book` entity with any existing `PriceOffer` relationship.
+2. Set the relationship to the new `PriceOffer` entity you want to apply to this book.
+3. Call `SaveChanges` to update the database.
+
+````c#
+// Adding a new promotional price to an existing book that doesn’t have one
+var book = context.Books // Finds a book. In this example, the book doesn’t have an existing promotion, but it would also work if there were an existing promotion.
+    .Include(p => p.Promotion) // Although the include isn’t needed because you’re loading something without a Promotion, using the include is good practice, as you should load any relationships if you’re going to change a relationship.
+    .First(p => p.Promotion == null);
+
+book.Promotion = new PriceOffer // Adds a new PriceOffer to this book
+{
+    NewPrice = book.Price / 2,
+    PromotionalText = "Half price today!"
+};
+context.SaveChanges(); // The SaveChanges method calls DetectChanges, which finds that the Promotion property has changed, so it adds that entity to the PriceOffers table.
+````
+
+As you can see, the update of the relationship is like the basic update you made to change the book’s published date. In this case, EF Core has to do extra work because of the relationship. EF Core creates a new row in the `PriceOffers` table, which you can see in the SQL snippet that EF Core produces for the code:
+
+````sql
+INSERT INTO [PriceOffers]
+	([BookId], [NewPrice], [PromotionalText])
+	VALUES (@p0, @p1, @p2);
+````
+
+Now, what happens if there’s an existing promotion on the book (that is, the `Promotion` property in the `Book` entity class isn’t `null`)? That case is why the `Include(p => p.Promotion)` command in the query that loaded the `Book` entity class is so important. Because of that Include method, EF Core will know that an existing `PriceOffer` is assigned to this book and will delete it before adding the new version.
+
+To be clear, in this case you must use some form of loading of the relationship - *eager*, *explicit*, *select*, or *lazy loading* of the relationship - so that EF Core knows about it before the update. If you don’t, and if there’s an existing relationship, EF Core will throw an exception on a duplicate foreign key `BookId`, which EF Core has placed a unique index on, and another row in the `PriceOffers` table will have the same value.
+
+
+
+**DISCONNECTED STATE UPDATE**
+
+In the disconnected state, the information to define which book to update and what to put in the `PriceOffer` entity class would be passed back from stage 1 to stage 2. That situation happened in the update of the book’s publication date, where the `BookId` and the `PublishedOn` values were fed back.
+
+In the case of adding a promotion to a book, you need to pass in the `BookId`, which uniquely defines the book you want, plus the `NewPrice` and the `PromotionalText` values that make up the `PriceOffer` entity class. The next listing shows you the `ChangePriceOfferService` class, which contains the two methods to show the data to the user and update the promotion on the `Book` entity class when the user submits a request.
+
+````c#
+// ChangePriceOfferService class with a method to handle each stage
+public class ChangePriceOfferService : IChangePriceOfferService
+{
+    private readonly EfCoreContext _context;
+
+    public Book OrgBook { get; private set; }
+
+    public ChangePriceOfferService(EfCoreContext context)
+    {
+        _context = context;
+    }
+
+    public PriceOffer GetOriginal(int id) // Gets a PriceOffer class to send to the user to update
+    {
+        OrgBook = _context.Books // Loads the book with any existing Promotion
+            .Include(r => r.Promotion)
+            .Single(k => k.BookId == id);
+        
+        return OrgBook?.Promotion // You return either the existing Promotion for editing or create a new one. The important point is to set the BookId, as you need to pass it through to the second stage.
+            ?? new PriceOffer
+        {
+            BookId = id,
+            NewPrice = OrgBook.Price
+        };
+    }
+
+    public Book AddUpdatePriceOffer(PriceOffer promotion) // Handles the second part of the update, performing a selective add/update of the Promotion property of the selected book
+    {
+        var book = _context.Books // Loads the book with any existing promotion, which is important because otherwise, your new PriceOffer will clash and throw an error
+            .Include(r => r.Promotion)
+            .Single(k => k.BookId == promotion.BookId);
+        
+        if (book.Promotion == null) // Checks whether the code should create a new PriceOffer or update the existing PriceOffer
+        {
+            book.Promotion = promotion; // You need to add a new PriceOffer, so you assign the promotion to the relational link. EF Core will see it and add a new row in the PriceOffer table.
+        }
+        else
+        {
+            // You need to do an update, so you copy over only the parts that you want to change. EF Core will see this update and produce code to update only these two columns.
+            book.Promotion.NewPrice = promotion.NewPrice;
+            book.Promotion.PromotionalText = promotion.PromotionalText;
+        }
+        _context.SaveChanges(); // SaveChanges uses its DetectChanges method, which sees what changes—either adding a new PriceOffer or updating an existing one.
+        return book; // Returns the updated book
+    }
+}
+````
+
+This code either updates an existing `PriceOffer` or adds a new `PriceOffer` if none exists. When `SaveChanges` is called, it can work out, via EF Core’s `DetectChanges` method, what type of update is needed and create the correct SQL to update the database.
+
+
+
+**ALTERNATIVE WAY OF UPDATING THE RELATIONSHIP: CREATING A NEW ROW DIRECTLY**
+
+We’ve approached this update as changing a relationship in the `Book` entity class, but you can also approach it as creating/deleting a row in the `PriceOffers` table. This listing finds the first `Book` in the database that doesn’t have a `Promotion` linked to it and then adds a new `PriceOffer` entity to that book.
+
+````c#
+// Creating a PriceOffer row to go with an existing book
+var book = context.Books
+    .First(p => p.Promotion == null); // You find the book that you want to add the new PriceOffer to, which must not be an existing PriceOffer.
+
+context.Add( new PriceOffer
+{
+    BookId = book.BookId,
+    NewPrice = book.Price / 2,
+    PromotionalText = "Half price today!"
+});
+context.SaveChanges(); // SaveChanges adds the PriceOffer to the PriceOffers table.
+````
+
+You should note that previously, you didn’t have to set the `BookId` property in the `PriceOffer` entity class, because EF Core did that for you. But when you’re creating a relationship this way, you do need to set the foreign key. Having done so, if you load the `Book` entity class with its `Promotion` relationship after the previous create code, you’ll find that the `Book` has gained a `Promotion` relationship.
+
+The advantage of creating the dependent entity class is that it saves you from needing to reload the principal entity class (in this case, `Book`) in a disconnected state. The downside is that EF Core doesn’t help you with the relationships. In this case, if there were an existing `PriceOffer` on the book and you added another, `SaveChanges` would fail because you’d have two `PriceOffer` rows with the same foreign key.
+
+When EF Core can’t help you with the relationships, you need to use the create/delete approach with care. Sometimes, this approach can make handling a complex relationship easier, so it’s worth keeping in mind, but I prefer updating the principal entity class’s relationship in most one-to-one cases.
+
+
+
+#### Updating one-to-many relationships
