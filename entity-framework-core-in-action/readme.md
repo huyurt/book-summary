@@ -189,7 +189,7 @@ public static void ChangeWubUrl()
 
 
 
-#### ONE-TO-ONE RELATIONSHIP: PRICEOFFER TO A BOOK
+#### One-to-one Relationship: Priceoffer to a book
 
 A book can have a promotional price applied to it with an optional row in the Price- Offer, which is an example of a one-to-one relationship. (Technically, the relationship is one-to-zero-or-one, but EF Core handles it the same way.)
 
@@ -203,7 +203,7 @@ To calculate the final price of the book, you need to check for a row in the Pri
 
 
 
-#### ONE-TO-MANY RELATIONSHIP: REVIEWS TO A BOOK
+#### One-to-many relationship: Reviews to a book
 
 You want to allow customers to review a book; they can give a book a star rating and optionally leave a comment. Because a book may have no reviews or many (unlimited) reviews, you need to create a table to hold that data. In this example, you’ll call the table Review. The Books table has a one-to-many relationship to the Review table.
 
@@ -217,7 +217,7 @@ In the Summary display, you need to count the number of reviews and work out the
 
 
 
-#### MANY-TO-MANY RELATIONSHIP: MANUALLY CONFIGURED
+#### Many-to-many relationship: Manually configured
 
 Books can be written by one or more authors, and an author may write one or more books. The link between the Books and Authors tables is called a many-to-many relationship, which in this case needs a linking table to achieve this relationship.
 In this case, you create your own linking table with an Order value in it because the names of the authors in a book must be displayed in a specific order.
@@ -232,9 +232,9 @@ A typical onscreen display from the many-to-many relationship would look like th
 
 
 
-#### MANY-TO-MANY RELATIONSHIP: AUTOCONFIGURED BY EF CORE
+#### Many-to-many relationship: Autoconfigured by EF Core
 
-Books can be tagged with different categories - such as Microsoft .NET, Linux, Web, and so on - to help the customer to find a book on the topic they are interested in. A category might be applied to multiple books, and a book might have one or more categories, so a many-to-many linking table is needed. But unlike in the previous BookAuthor linking table, the tags don’t have to be ordered, which makes the linking table simpler.
+Books can be tagged with different categories - such as Microsoft .NET, Linux, Web, and so on - to help the customer to find a book on the topic they are interested in. A category might be applied to multiple books, and a book might have one or more categories, so a many-to-many linking table is needed. But unlike in the previous `BookAuthor` linking table, the tags don’t have to be ordered, which makes the linking table simpler.
 
 A typical onscreen display from a many-to-many relationship would look like this:
 
@@ -1410,3 +1410,384 @@ When EF Core can’t help you with the relationships, you need to use the create
 
 
 #### Updating one-to-many relationships
+
+````c#
+// The Review class, showing the foreign key back to the Book entity class
+public class Review // Holds customer reviews with their ratings
+{
+    public int ReviewId { get; set; }
+    public string VoterName { get; set; }
+    public int NumStars { get; set; }
+    public string Comment { get; set; }
+    
+    //-----------------------------------------
+    //Relationships
+    
+    public int BookId { get; set; } // Foreign key holds the key of the book this review belongs to.
+}
+````
+
+The one-to-many relationship in the Book App database is represented by `Book`’s `Reviews`; a user of the site can add a review to a book. There can be any number of reviews, from none to a lot. This listing shows the `Review`-dependent entity class, which links to the Books table via the foreign key called `BookId`.
+
+
+
+**CONNECTED STATE UPDATE**
+
+````c#
+// Adding a review to a book in the connected state
+var book = context.Books
+    .Include(p => p.Reviews)
+    .First(); // Finds the first book and loads it with any reviews it might have
+
+book.Reviews.Add(new Review
+{
+    VoterName = "Unit Test",
+    NumStars = 5,
+    Comment = "Great book!"
+});
+context.SaveChanges(); // SaveChanges calls DetectChanges, which finds that the Reviews property has changed, and from there finds the new Review, which it adds to the Review table.
+````
+
+This code follows the same pattern as the one-to-one connected update: load the `Book` entity class and the `Reviews` relationship via the `Include` method. But in this case, you add the `Review` entity to the Book’s Reviews collection. Because you used the `Include` method, the `Reviews` property will be an empty collection if there are no reviews or a collection of the reviews linked to this book. In this example, the database already contains some `Book` entities, and we take the first.
+
+
+
+**ALTERING/REPLACING ALL THE ONE-TO-MANY RELATIONSHIPS**
+
+If the books had categories (say, Software Design, Software Languages, and so on), you might allow an admin user to change the categories. One way to implement this change would be to show the current categories in a multiselect list, allow the admin user to change them, and then replace *all* the categories on the book with the new selection.
+
+EF Core makes replacing the whole collection easy. If you assign a new collection to a one-to-many relationship that has been loaded with tracking (such as by using the `Include` method), EF Core will replace the existing collection with the new collection. If the items in the collection can be linked to only the principal class (the dependent class has a non-nullable foreign key), by default, EF Core will delete the items that were in the collection that have been removed.
+
+Next is an example of replacing the whole collection of existing book reviews with a new collection. The effect is to remove the original reviews and replace them with the one new review.
+
+````c#
+// Replacing a whole collection of reviews with another collection
+var book = context.Books
+    .Include(p => p.Reviews) // This include is important; it creates a collection with any existing reviews in it or an empty collection if there are no existing reviews.
+    .Single(p => p.BookId == twoReviewBookId); // This book you’re loading has two reviews.
+
+book.Reviews = new List<Review> // You replace the whole collection.
+{
+    new Review
+    {
+        VoterName = "Unit Test",
+        NumStars = 5,
+    }
+};
+context.SaveChanges(); // SaveChanges, via DetectChanges, knows that the old collection should be deleted and that the new collection should be written to the database.
+````
+
+Because you’re using test data in the example, you know that the book with the primary key `twoReviewBookId` has two reviews and that the book is the only one with reviews; hence, there are only two reviews in the whole database. After the `SaveChanges` method is called, the book has only one review, and the two old reviews have been deleted, so now the database has only one review in it.
+
+Removing a single row is as simple as removing the entity from the list. EF Core will see the change and delete the row that’s linked to that entity. Similarly, if you add a new `Review` to the `Book`’s `Reviews` collection property, EF Core will see that change to that collection and add the new `Review` to the database.
+
+The loading of the existing collection is important for these changes: if you don’t load them, EF Core can’t remove, update, or replace them. The old versions will still be in the database after the update because EF Core didn’t know about them at the time of the update. You haven’t replaced the existing two `Reviews` with your single `Review`. In fact, you now have three `Reviews` - the two that were originally in the database and your new one - which is not what you intended to do.
+
+
+
+**DISCONNECTED-STATE UPDATE**
+
+In the disconnected state, you create an empty `Review` entity class but fill in its foreign key, `BookId`, with the book the user wants to provide a review for. Then the user votes on the book, and you add that review to the book that they referred to.
+
+````c#
+// Adding a new review to a book in the example Book App
+public class AddReviewService
+{
+    private readonly EfCoreContext _context;
+    
+    public string BookTitle { get; private set; }
+    
+    public AddReviewService(EfCoreContext context)
+    {
+        _context = context;
+    }
+
+    public Review GetBlankReview(int id) // Forms a review to be filled in by the user
+    {
+        BookTitle = _context.Books
+            .Where(p => p.BookId == id)
+            .Select(p => p.Title)
+            .Single();
+        return new Review
+        {
+            BookId = id
+        };
+    }
+
+    public Book AddReviewToBook(Review review) // Updates the book with the new review
+    {
+        var book = _context.Books
+            .Include(r => r.Reviews)
+            .Single(k => k.BookId == review.BookId);
+        book.Reviews.Add(review); // Adds the new review to the Reviews collection
+        _context.SaveChanges(); // SaveChanges uses its DetectChanges method, which sees that the Book Review property has changed, and creates a new row in the Review table.
+        return book; // Returns the updated book
+    }
+}
+````
+
+This code has a simpler first part than the previous disconnected-state examples because you’re adding a new review, so you don’t have to load the existing data for the user.
+
+
+
+**ALTERNATIVE WAY OF UPDATING THE RELATIONSHIP: CREATING A NEW ROW DIRECTLY**
+
+As with the `PriceOffer`, you can add a one-to-many relationship directly to the database. But again, you take on the role of managing the relationship. If you want to replace the entire reviews collection, for example, you’d have to delete all the rows that the reviews linked to the book in question before adding your new collection.
+
+Adding a row directly to the database has some advantages, because loading all the one-to-many relationships might turn out to be a lot of data if you have lots of items and/or they’re big. Therefore, keep this approach in mind if you have performance issues.
+
+
+
+#### Updating a many-to-many relationship
+
+In EF Core, we talk about many-to-many relationships, but a relational database doesn’t directly implement many-to-many relationships. Instead, we’re dealing with two one-to-many relationships.
+
+
+
+![](./diagrams/svg/03_02_updating_many_to_many_relationship.drawio.svg)
+
+
+
+In EF Core, you have two ways to create many-to-many relationships between two entity classes:
+
+* You link to a linking table in each entity—that is, you have an `ICollection<LeftRight>` property in your `Left` entity class. You need to create an entity class to act as the linking table (such as `LeftRight`), but that entity class lets you add extra data in the linking table so that you can sort/filter the many-to-many relationships.
+* You link directly between the two entity classes you want to have a many-to-many relationship—that is, you have an `ICollection<Right>` property in your `Left` entity class. This link is much easier to code because EF Core handles the creation of the linking table, but then you can’t access the linking table in a normal Include method to sort/filter.
+
+
+
+**UPDATING A MANY-TO-MANY RELATIONSHIP VIA A LINKING ENTITY CLASS**
+
+In the `Book` entity class, you need a many-to-many link to the `Authors` of the book. But in a book, the order of the authors’ names matters. Therefore, you create a linking table with an `Order` (`byte`) property that allows you to display the `Author`'s `Name` properties in the correct order, which means that you
+
+* Create an entity class called `BookAuthor`, which contains both the primary key of the `Book` entity class (`BookId`) and the primary key of the `Author` entity class (`AuthorId`). You also add an `Order` property, which contains a number setting the order in which the `Authors` should be displayed for this book. The `BookAuthor` linking entity class also contains two one-to-one relationships to the `Author` and the `Book`.
+* You add a navigational property called `AuthorsLink` of type `ICollection<BookAuthor>` to your `Book` entity class.
+* You also add a navigational property called `BooksLink` of type `ICollection<BookAuthor>` to your `Author` entity class.
+
+
+
+![](./diagrams/svg/03_03_book_many_to_many_relationship.drawio.svg)
+
+
+
+The `BookAuthor` entity class has two properties: `BookId` and `AuthorId`. These properties are foreign keys to the Books table and the Authors table, respectively. Together, they also form the primary key (known as a *composite key*, because it has more than one part) for the `BookAuthor` row. The composite key has the effect of ensuring that there’s only one link between the `Book` and the `Author`.
+
+````c#
+// Adding a new Author to the book Quantum Networking
+var book = context.Books
+    .Include(p => p.AuthorsLink)
+    .Single(p => p.Title == "Quantum Networking");
+
+var existingAuthor = context.Authors
+    .Single(p => p.Name == "Martin Fowler");
+
+book.AuthorsLink.Add(new BookAuthor // You add a new BookAuthor linking entity to the Book’s AuthorsLink collection.
+{
+    Book = book,
+    Author = existingAuthor,
+    Order = (byte) book.AuthorsLink.Count // You set the Order to the old count of AuthorsLink—in this case, 1 (because the first author has a value of 0).
+});
+context.SaveChanges(); // The SaveChanges will create a new row in the BookAuthor table.
+````
+
+The thing to understand is that the `BookAuthor` entity class is the *many* side of the relationship. This listing, which adds another author to one of the books, should look familiar because it’s similar to the one-to-many update methods I’ve already explained.
+
+One thing to note is that when you load the Book’s `AuthorsLink`, you don’t need to load the corresponding `BooksLink` in the `Author` entity class. The reason is that when you update the `AuthorsLink` collection, EF Core knows that there is a link to the `Book`, and during the update, EF Core will fill in that link automatically. The next time someone loads the `Author` entity class and its `BooksLink` relationship, they’ll see a link to the *Quantum Networking* book in that collection.
+
+Also be aware that deleting an `AuthorsLink` entry won’t delete the `Book` or `Author` entities they link to because that entry is the *one* end of a *one-to-many* relationship, which isn’t dependent on the `Book` or `Author`. In fact, the `Book` and `Author` entity classes are *principal entities*, with the `BookAuthor` classes being dependent on both of the principal entity classes.
+
+
+
+**UPDATING A MANY-TO-MANY RELATIONSHIP WITH DIRECT ACCESS TO THE OTHER ENTITY**
+
+EF Core added the ability to access another entity class directly in a many-to-many relationship. This ability makes it much easier to set up and use the many-to-many relationship, but you won’t be able to access the linking table in an `Include` method.
+
+In the Book App, a book can have zero to many categories, such as Linux, Databases, and Microsoft .NET, to help a customer find the right book. These categories are held in a `Tag` entity (the `TagId` holds the category name) with a direct many-to-many relationship to a `Book`. This allows the `Book` to show its categories in the Book App’s book list display and also allows the Book App to provide a feature to filter the book list display by a category.
+
+
+
+![](./diagrams/svg/03_04_book_many_to_many_relationship.drawio.svg)
+
+
+
+This direct-access many-to-many feature makes adding/deleting links between the `Book` entity and the `Tag` entities simple.
+
+````c#
+// Adding a Tag to a Book via a direct many-to-many relationship
+var book = context.Books
+    .Include(p => p.Tags)
+    .Single(p => p.Title == "Quantum Networking");
+
+var existingTag = context.Tags
+    .Single(p => p.TagId == "Editor's Choice");
+
+book.Tags.Add(existingTag); // You add the Tag to the Books Tags collection.
+context.SaveChanges(); // When SaveChanges is called, EF Core creates a new row in the hidden BookTags table.
+````
+
+You’ll see that it’s much easier to add a new entry to a direct many-to-many relationship. EF Core takes on the work of creating the necessary row in the `BooksTag` table. And if you removed an entry in the Tags collection, you would delete the corresponding row in the `BooksTag` table.
+
+
+
+**ALTERNATIVE WAY OF UPDATING THE RELATIONSHIP: CREATING A NEW ROW DIRECTLY**
+
+We’ll discuss another approach: creating the linking table row directly. The benefit of this approach is better performance when you have lots of entries in the collection. Rather than having to read in the collection, you can create a new entry in the linking table. You could create a `BookAuthor` entity class and fill in the `Book` and `Author` one-to-one relationships in that class, for example. Then you Add that new `BookAuthor` entity instance to the database and call `SaveChanges`. For the `AuthorsLink` collection, which is likely to be small, this technique is most likely not worth the extra effort, but for many-to-many relationships that contain lots of linking entries, it can significantly improve performance.
+
+
+
+#### Advanced feature: Updating relationships via foreign keys
+
+When you added a review to a book, for example, you loaded the `Book` entity with all its `Reviews`. That’s fine, but in a disconnected state, you have to load the `Book` and all its `Reviews` from the book’s primary key that came back from the browser/RESTful API. In many situations, you can cut out the loading of the entity classes and set the foreign keys instead.
+
+The code assumes that the `ReviewId` of the `Review` the user wants to change and the new `BookId` that they want to attach the review to are returned in a variable called *dto*.
+
+````c#
+// Updating the foreign key to change a relationship
+var reviewToChange = context
+    .Find<Review>(dto.ReviewId);
+reviewToChange.BookId = dto.NewBookId; // Changes the foreign key in the review to point to the book it should be linked to
+context.SaveChanges(); // Calls SaveChanges, which finds the foreign key in the review changed, so it updates that column in the database
+````
+
+The benefit of this technique is that you don’t have to load the `Book` entity class or use an `Include` command to load all the `Reviews` associated with this book. In our example Book App, these entities aren’t too big, but in a real application, the principal and dependent entities could be quite large. (Some Amazon products have thousands of reviews, for example.) In disconnected systems, in which we often send only the primary keys over the disconnect, this approach can be useful for cutting down on database accesses and, hence, improving performance.
+
+
+
+### Deleting entities
+
+The final way to change the data in the database is to delete a row from a table.
+
+
+
+#### Soft-delete approach: Using a global query filter to hide entities
+
+One school of thought says that you shouldn’t delete anything from a database but use a status to hide it, known as a soft delete. EF Core provides a feature called global query filter that allows a soft delete to be implemented simply.
+
+The thinking behind a soft delete is that in real-world applications, data doesn’t stop being data; it transforms into another state. In the case of our books example, a book may not still be on sale, but the fact that the book existed isn’t in doubt, so why delete it? Instead, you set a flag to say that the entity is to be hidden in all queries and relationship. To see how this process works, you’ll add the soft-delete feature to the list of `Book` entities. To do so, you need to do two things:
+
+* Add a `boolean` property called `SoftDeleted` to the `Book` entity class. If that property is `true`, the `Book` entity instance is soft-deleted; it shouldn’t be found in a normal query.
+* *Add a global query filter via EF Core’s fluent configuration commands.* The effect is to apply an extra `Where` filter to any access to the `Books` table.
+
+````c#
+public class Book
+{
+    //… other properties left out for clarity
+    public bool SoftDeleted { get; set; }
+}
+````
+
+
+
+````c#
+// Adding a global query filter to the DbSet<Book>Books property
+public class EfCoreContext : DbContext
+{
+    //… Other parts removed for clarity
+    
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        //… other configration parts removed for clarity
+
+        modelBuilder.Entity<Book>()
+            .HasQueryFilter(p => !p.SoftDeleted); // Adds a filter to all accesses to the Book entities. You can bypass this filter by using the IgnoreQueryFilters operator.
+    }
+}
+````
+
+
+
+To soft-delete a `Book` entity, you need to set the `SoftDeleted` property to true and call `SaveChanges`. Then any query on the `Book` entities will exclude the Book entities that have the `SoftDeleted` property set to `true`.
+
+If you want to access all the entities that have a model-level filter, you add the `IgnoreQueryFilters` method to the query, such as `context.Books.IgnoreQueryFilters()`. This method bypasses any query filter on that entity.
+
+
+
+#### Deleting a dependent-only entity with no relationships
+
+````c#
+// Removing (deleting) an entity from the database
+var promotion = context.PriceOffers
+    .First();
+
+context.Remove(promotion); // Removes that PriceOffer from the application’s DbContext. The DbContext works out what to remove based on its parameter type.
+context.SaveChanges(); // SaveChanges calls DetectChanges, which finds a tracked PriceOffer entity marked as deleted and then deletes it from the database.
+````
+
+Calling the `Remove` method sets the `State` of the entity provided as the parameter to `Deleted`. Then, when you call `SaveChanges`, EF Core finds the entity marked as `Deleted` and creates the correct database commands to delete the appropriate row from the table the entity referred to (in this case, a row in the PriceOffers table). The SQL command that EF Core produces for SQL Server is shown in the following snippet:
+
+````sql
+SET NOCOUNT ON;
+DELETE FROM [PriceOffers]
+WHERE [PriceOfferId] = @p0;
+SELECT @@ROWCOUNT;
+````
+
+
+
+#### Deleting a principal entity that has relationships
+
+*Referential integrity* is a relational database concept indicating that table relationships must always be consistent. Any foreign-key field must agree with the primary key referenced by the foreign key.
+
+Relational databases need to keep referential integrity, so if you delete a row in a table that other rows are pointing to via a foreign key, something has to happen to stop referential integrity from being lost.
+
+Following are three ways that you can set a database to keep referential integrity when you delete a principal entity with dependent entities:
+
+* You can tell the database server to delete the dependent entities that rely on the principal entity, known as *cascade deletes*.
+* You can tell the database server to set the foreign keys of the dependent entities to null, if the column allows that.
+* If neither of those rules is set up, the database server will raise an error if you try to delete a principal entity with dependent entities.
+
+
+
+#### Deleting a book with its dependent relationships
+
+We’re going to delete a `Book` entity, which is a principal entity with three dependent relationships: `Promotion`, `Reviews`, and `AuthorsLink`. These three dependent entities can’t exist without the Book entity; a non-nullable foreign key links these dependent entities to a specific `Book` row.
+
+By default, EF Core uses cascade deletes for dependent relationships with nonnullable foreign keys. Cascade deletes make deleting principal entities easier from the developer’s point of view, because the other two rules need extra code to handle deleting the dependent entities. But in many business applications, this approach may not be appropriate. This chapter uses the cascade delete approach because it’s EF Core’s default for non-nullable foreign keys.
+
+With that caveat in mind, let’s see cascade delete in action by using the default cascade-delete setting to delete a Book that has relationships. This listing loads the `Promotion` (`PriceOffer` entity class), `Reviews`, `AuthorsLink`, and `Tags` relationships with the `Book` entity class before deleting that `Book`.
+
+````c#
+// Deleting a book that has three dependent entity classes
+var book = context.Books
+    .Include(p => p.Promotion)
+    .Include(p => p.Reviews)
+    .Include(p => p.AuthorsLink)
+    .Include(p => p.Tags)
+    .Single(p => p.Title == "Quantum Networking");
+
+context.Books.Remove(book); // Deletes that book
+context.SaveChanges(); // SaveChanges calls DetectChanges, which finds a tracked Book entity marked as deleted, deletes its dependent relationships, and then deletes the book.
+````
+
+EF Core deletes the `Book`, the `PriceOffer`, the two `Reviews`, the single `BookAuthor` link, and the single (hidden) `BookTag`.
+
+You put in the four `Includes`, EF Core knew about the dependent entities and performed the delete. If you didn’t incorporate the `Includes` in your code, EF Core wouldn’t know about the dependent entities and couldn’t delete the three dependent entities. In that case, the problem of keeping referential integrity would fall to the database server, and its response would depend on how the DELETE ON part of the foreign-key constraint was set up. Databases created by EF Core for these entity classes would, by default, be set to use cascade deletes.
+
+The `Author` and `Tag` linked to the `Book` aren’t deleted because they are not dependent entities of the `Book`; only the `BookAuthor` and `BookTag` linking entities are deleted. This arrangement makes sense because the `Author` and `Tag` might be used on other `Books`.
+
+Sometimes, it’s useful to stop a principal entity from being deleted if a certain dependent entity is linked to it. In our example Book App, for example, if a customer orders a book, you want to keep that order information even if the book is no longer for sale. In this case, you change the EF Core’s on-delete action to `Restrict` and remove the `ON DELETE CASCADE` from the foreign-key constraint in the database so that an error will be raised if an attempt to delete the book is made.
+
+
+
+### Summary
+
+* Entity instances have a `State`, whose values can be `Added`, `Unchanged`, `Modified`, `Deleted`, or `Detached`. This `State` defines what happens to the entity when `SaveChanges` is called.
+* If you `Add` an entity, its `State` is set to `Added`. When you call `SaveChanges`, that entity is written out to the database as a new row.
+* You can update a property, or properties, in an entity class by loading the entity class as a tracked entity, changing the property/properties, and calling `SaveChanges`.
+* Real-world applications use two types of update scenarios - connected and disconnected state - that affect the way you perform the update.
+* EF Core has an Update method, which marks the whole of the entity class as updated. You can use this method when you want to update the entity class and have all the data already available to you.
+* When you’re updating a relationship, you have two options, with different advantages and disadvantages:
+  * You can load the existing relationship with the primary entity and update that relationship in the primary entity. EF Core will sort things out from there. This option is easier to use but can create performance issues when you’re dealing with large collections.
+  * You can create, update, or delete the dependent entity. This approach is harder to get right but typically is faster because you don’t need to load any existing relationships.
+* To delete an entity from the database, you use the `Remove` method, followed by the `SaveChanges` method.
+
+
+
+
+
+## 4. Using EF Core in business logic
+
+* Understanding business logic and its use of EF Core
+* Looking at three types of business logic, from the easy to the complex
+* Reviewing each type of business logic, with pros and cons
+* Adding a step that validates the data before it’s written to the database
+* Using transactions to daisy-chain code sequences
