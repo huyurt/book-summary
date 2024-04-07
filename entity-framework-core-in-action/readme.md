@@ -1791,3 +1791,346 @@ Sometimes, it’s useful to stop a principal entity from being deleted if a cert
 * Reviewing each type of business logic, with pros and cons
 * Adding a step that validates the data before it’s written to the database
 * Using transactions to daisy-chain code sequences
+
+
+
+### Five guidelines for building business logic that uses EF Core
+
+* *The business logic has first call on how the database structure is defined.* Because the problem you’re trying to solve is the heart of the problem, the logic should define the way the whole application is designed. Therefore, you try to make the database structure and the entity classes match your business logic data needs as much as you can.
+* *The business logic should have no distractions.* Writing the business logic is difficult enough in itself, so you isolate it from all the other application layers other than the entity classes. When you write the business logic, you must think only about the business problem you’re trying to fix. You leave the task of adapting the data for presentation to the service layer in your application.
+* *Business logic should think that it’s working on in-memory data.* You need to have some load and save parts, of course, but for the core of your business logic, treat the data (as much as is practical) as though it’s a normal, in-memory class or collection.
+* *Isolate the database access code into a separate project.* This rule came out of writing an e-commerce application with complex pricing and delivery rules. You should use another project, a companion to the business logic, to hold all the database access code.
+* *The business logic shouldn’t call EF Core’s `SaveChanges` directly.* You should have a class in the service layer (or a custom library) whose job it is to run the business logic. If there are no errors, this class calls `SaveChanges`. The main reason for this rule is to have control of whether to write out the data, but it has other benefits.
+
+
+
+![](./diagrams/svg/04_01_business_logic.drawio.svg)
+
+
+
+#### Guideline 1: Business logic has first call on defining the database structure
+
+This guideline says that the design of the database should follow the business needs - in this case, represented by six business rules. Only three of these rules are relevant to the database design:
+
+* An order must include at least one book (implying that there can be more).
+* The price of the book must be copied to the order, because the price could change later.
+* The order must remember the person who ordered the books.
+
+These three rules dictates an `Order` entity class that has a collection of `LineItem` entity classes - a one-to many relationship. The `Order` entity class holds the information about the person placing the order, and each `LineItem` entity class holds a reference to the book order, how many, and at what price.
+
+
+
+![](./diagrams/svg/04_02_guideline1_business_logic_has_first_call_on_defining.drawio.svg)
+
+
+
+#### Guideline 2: Business logic should have no distractions
+
+You are at the heart of the business logic code, and the code here will do most of the work. This code is going to be the hardest part of the implementation that you write, but you want to help yourself by cutting off any distractions. That way, you can stay focused on the problem.
+
+
+
+**CHECKING FOR ERRORS AND FEEDING THEM BACK TO THE USER: VALIDATION**
+
+You have two main approaches to handling the passing of errors back up to higher levels. One is to throw an exception when an error occurs, and the other is to pass back the errors to the caller via a status interface. Each option has its own advantages and disadvantages. This example uses the second approach: passing the errors back in some form of status class to the higher level to check.
+
+`BizActionErrors` abstract class provides a common error-handling interface for all your business logic. The class contains a C# method called `AddError` that the business logic can call to add an error and an *immutable list* (a list that can’t be changed) called `Errors`, which holds all the validation errors found while running the business logic.
+
+You’ll use a class called `ValidationResult` to store each error because it’s the standard way of returning errors with optional, additional information on the exact property the error was related to.
+
+````c#
+// Abstract base class providing error handling for your business logic
+public abstract class BizActionErrors // Abstract class that provides error handling for business logic
+{
+    private readonly List<ValidationResult> _errors = new List<ValidationResult>(); // Holds the list of validation errors privately
+    
+    public IImmutableList<ValidationResult> Errors => _errors.ToImmutableList(); // Provides a public, immutable list of errors
+
+    public bool HasErrors => _errors.Any(); // Creates a bool HasErrors to make checking for errors easier
+
+    protected void AddError(string errorMessage, params string[] propertyNames) // Allows a simple error message, or an error message with properties linked to it, to be added to the errors list
+    {
+        _errors.Add( new ValidationResult(errorMessage, propertyNames)); // Validation result has an error message and a possibly empty list of properties it’s linked to
+    }
+}
+````
+
+Using this abstract class means that your business logic is easier to write and all your business logic has a consistent way of handling errors. The other advantage is that you can change the way errors are handled internally without having to change any of your business logic code.
+Your business logic for handling an order does a lot of validation, which is typical for an order, because it often involves money. Other business logic may not do any validation, but the base class `BizActionErrors` will automatically return a `HasErrors` of false, which means that all business logic can be dealt with in the same way.
+
+
+
+#### Guideline 3: Business logic should think that it’s working on in-memory data
+
+Now you’ll start on the main class: `PlaceOrderAction`, which contains the pure business logic. This class relies on the companion class `PlaceOrderDbAccess` to present the data as an in-memory set (in this case, a dictionary) and to write the created order to the database. Although you’re not trying to hide the database from the pure business logic, you do want it to work as though the data is normal .NET classes.
+
+`PlaceOrderAction` class, which inherits the abstract class `BizActionErrors` to handle returning error messages to the user. It also uses two methods that the companion `PlaceOrderDbAccess` class provides:
+
+* `FindBooksByIdsWithPriceOffers` - Takes the list of `BookIds` and returns a dictionary with the `BookId` as the key and the `Book` entity class as the value and any associated `PriceOffers`
+* `Add` - Adds the `Order` entity class with its `LineItem` collection to the database
+
+````c#
+// PlaceOrderAction class with build-a-new-order business logic
+public class PlaceOrderAction :
+	BizActionErrors, // The BizActionErrors class provides error handling for the business logic.
+	IBizAction<PlaceOrderInDto,Order> // The IBizAction interface makes the business logic conform to a standard interface.
+{
+    private readonly IPlaceOrderDbAccess _dbAccess;
+
+    public PlaceOrderAction(IPlaceOrderDbAccess dbAccess) // The PlaceOrderAction uses PlaceOrder-DbAccess class to handle database accesses.
+    {
+        _dbAccess = dbAccess;
+    }
+
+    public Order Action(PlaceOrderInDto dto) // This method is called by the BizRunner to execute this business logic.
+    {
+        // Some basic validation
+        if (!dto.AcceptTAndCs)
+        {
+            AddError("You must accept the T&Cs to place an order.");
+            return null;
+        }
+
+        if (!dto.LineItems.Any())
+        {
+            AddError("No items in your basket.");
+            return null;
+        }
+        
+        var booksDict = _dbAccess.FindBooksByIdsWithPriceOffers(dto.LineItems.Select(x => x.BookId)); // The PlaceOrderDbAccess class finds all the bought books, with optional PriceOffers.
+        var order = new Order // Creates the Order, using FormLineItemsWithError Checking to create the LineItems
+        {
+            CustomerId = dto.UserId,
+            LineItems = FormLineItemsWithErrorChecking(dto.LineItems, booksDict)
+        };
+
+        if (!HasErrors) // Adds the order to the database only if there are no errors
+        {
+            _dbAccess.Add(order);
+        }
+
+        return HasErrors ? null : order; // If there are errors, returns null; otherwise, returns the order
+    }
+
+    private List<LineItem> FormLineItemsWithErrorChecking(IEnumerable<OrderLineItem> lineItems, IDictionary<int,Book> booksDict) // This private method handles the creation of each LineItem for each book ordered.
+    {
+        var result = new List<LineItem>();
+        var i = 1;
+
+        foreach (var lineItem in lineItems) // Goes through each book type that the person ordered
+        {
+            if (!booksDict.ContainsKey(lineItem.BookId)) // Treats a missing book as a system error and throws an exception
+            {
+                throw new InvalidOperationException("An order failed because book, " + $"id = {lineItem.BookId} was missing.");
+            }
+            
+            var book = booksDict[lineItem.BookId];
+            var bookPrice = book.Promotion?.NewPrice ?? book.Price; // Calculates the price at the time of the order
+
+            if (bookPrice <= 0) // More validation that checks whether the book can be sold
+            {
+                AddError($"Sorry, the book '{book.Title}' is not for sale.");
+            }
+            else
+            {
+                //Valid, so add to the order
+                result.Add(new LineItem // Everything is OK, so create the LineItem entity class with the details.
+                           {
+                               BookPrice = bookPrice,
+                               ChosenBook = book,
+                               LineNum = (byte)(i++),
+                               NumBooks = lineItem.NumBooks
+                           });
+            }
+        }
+        
+        return result; // Returns all the LineItems for this order
+    }
+}
+````
+
+You’ll notice that you add another validation check to ensure that the book the user selected is still in the database. This check wasn’t in the business rules, but it could occur, especially if malicious inputs were provided. In this case, you make a distinction between errors that the user can correct, which are returned by the `Errors` property, and system errors (in this case, a missing book), for which you throw an exception that the system should log.
+
+You may have seen at the top of the class that you apply an interface in the form of `IBizAction<PlaceOrderInDto,Order>`. This interface ensures that this business logic class conforms to a standard interface that you use across all your business logic.
+
+
+
+#### Guideline 4: Isolate the database access code into a separate project
+
+Put all the database access code that the business logic needs in a separate, companion class. This technique ensures that all the database accesses are in one place, making testing, refactoring, and performance tuning much easier.
+
+You make sure that your pure business logic, class `PlaceOrderAction`, and business database access class `PlaceOrderDbAccess` are in separate projects. That approach allows you to exclude any EF Core libraries from the pure business logic project, ensuring that all database access is done via the companion class, `PlaceOrderDb-Access`.
+
+`PlaceOrderDbAccess` class, which implements two methods to provide the database accesses that the pure business logic needs:
+
+* The `FindBooksByIdsWithPriceOffers` method, which finds and loads each `Book` entity class, with any optional `PriceOffer`.
+* The `Add` method, which adds the finished `Order` entity class to the application’s DbContext property, `Orders`, so that it can be saved to the database after EF Core’s `SaveChanges` method is called.
+
+````c#
+// PlaceOrderDbAccess, which handles all the database accesses
+public class PlaceOrderDbAccess : IPlaceOrderDbAccess
+{
+    private readonly EfCoreContext _context;
+
+    public PlaceOrderDbAccess(EfCoreContext context) // All the BizDbAccess need the application’s DbContext to access the database.
+    {
+        _context = context;
+    }
+
+    public IDictionary<int, Book> FindBooksByIdsWithPriceOffers // This method finds all the books that the user wants to buy.
+        (IEnumerable<int> bookIds) // The BizLogic hands a collection of BookIds, which the checkout has provided.
+    {
+        return _context.Books
+            .Where(x => bookIds.Contains(x.BookId)) // Finds a book for each Id, using the LINQ Contains method to find all the keys
+            .Include(r => r.Promotion) // Includes any optional promotion, which the BizLogic needs for working out the price
+            .ToDictionary(key => key.BookId); // Returns the result as a dictionary to make it easier for the BizLogic to look them up
+    }
+
+    public void Add(Order newOrder) // This method adds the new order to the DbContext’s Orders DbSet collection.
+    {
+        _context.Add(newOrder);
+    }
+}
+````
+
+The `PlaceOrderDbAccess` class implements an interface called `IPlaceOrderDbAccess`, which is how the `PlaceOrderAction` class accesses this class.
+
+
+
+#### Guideline 5: Business logic shouldn’t call EF Core’s SaveChanges
+
+The final rule says that the business logic doesn’t call EF Core’s `SaveChanges`, which would update the database directly. There are a few reasons for this rule:
+
+* You consider the service layer to be the main orchestrator of database accesses: it’s in command of what gets written to the database.
+* The service layer calls `SaveChanges` only if the business logic returns no errors.
+
+Each `BizRunner` works by defining a generic interface that the business logic must implement. Your class in the `BizLogic` project runs an action that expects a single input parameter of type `PlaceOrderInDto` and returns an object of type `Order`. Therefore, the `PlaceOrderAction` class implements the interface as shown in the following listing, but with its input and output types (`IBizAction<PlaceOrderInDto,Order>`).
+
+````c#
+// The interface that allows the BizRunner to execute business logic
+public interface IBizAction<in TIn, out TOut> // The BizAction uses the TIn and a TOut to define the input and output of the Action method.
+{
+    // Returns the error information from the business logic
+    IImmutableList<ValidationResult> Errors { get; }
+    bool HasErrors { get; }
+    TOut Action(TIn dto); // The action that the BizRunner will call
+}
+````
+
+When you have the business logic class implement this interface, the `BizRunner` knows how to run that code. This `BizRunner` variant is designed to work with business logic that has an input, provides an output, and writes to the database.
+
+````c#
+// The BizRunner that runs the business logic and returns a result or errors
+public class RunnerWriteDb<TIn, TOut>
+{
+    private readonly IBizAction<TIn, TOut> _actionClass;
+    private readonly EfCoreContext _context;
+
+    // Error information from the business logic is passed back to the user of the BizRunner.
+    public IImmutableList<ValidationResult> Errors => _actionClass.Errors;
+    public bool HasErrors => _actionClass.HasErrors;
+
+    // Handles business logic that conforms to the IBizAction<TIn, TOut> interface
+    public RunnerWriteDb(
+        IBizAction<TIn, TOut> actionClass,
+        EfCoreContext context)
+    {
+        _context = context;
+        _actionClass = actionClass;
+    }
+
+    public TOut RunAction(TIn dataIn) // Calls RunAction in your service layer or in your presentation layer if the data comes back in the right form
+    {
+        var result = _actionClass.Action(dataIn); // Runs the business logic you gave it
+        if (!HasErrors) // If there are no errors, calls SaveChanges to execute any add, update, or delete methods
+        {
+            _context.SaveChanges();
+        }
+        return result; // Returns the result that the business logic returned
+    }
+}
+````
+
+The `BizRunner` pattern hides the business logic and presents a common interface/API that other classes can use. The caller of the `BizRunner` doesn’t need to worry about EF Core, because all the calls to EF Core are in the `BizDbAccess` code or in the BizRunner. That fact in itself is reason enough to use the `BizRunner` pattern, but as you’ll see later, this pattern allows you to create other forms of `BizRunner` that add extra features.
+
+
+
+#### Putting it all together: Calling the order-processing business logic
+
+If the business logic is successful, the code clears the basket cookie and returns the `Order` entity class key so that a confirmation page can be shown to the user. If the order fails, it doesn’t clear the basket cookie, and the checkout page is shown again, with the error messages, so that the user can correct any problems and retry.
+
+````c#
+// The PlaceOrderService class that calls the business logic
+public class PlaceOrderService
+{
+    private readonly BasketCookie _basketCookie; // This class handles the basket cookie, which contains the user-selected books.
+
+    private readonly RunnerWriteDb<PlaceOrderInDto, Order> _runner; // Defines the input, PlaceOrderInDto, and output, Order, of this business logic
+    public IImmutableList<ValidationResult> Errors => _runner.Errors; // Holds any errors sent back from the business logic
+
+    public PlaceOrderService(
+        IRequestCookieCollection cookiesIn,
+        IResponseCookies cookiesOut,
+        EfCoreContext context) // The constructor takes in the cookie in/out data, plus the application’s DbContext.
+    {
+        _basketCookie = new BasketCookie(cookiesIn, cookiesOut); // Creates a BasketCookie using the cookie in/out data from ASP.NET Core
+        _runner = new RunnerWriteDb<PlaceOrderInDto, Order>(new PlaceOrderAction(new PlaceOrderDbAccess(context)), context); // Creates the BizRunner, with the business logic, that is to be run
+    }
+    
+    public int PlaceOrder(bool acceptTAndCs) // This method is the one to call when the user clicks the Purchase button.
+    {
+        var checkoutService = new CheckoutCookieService(_basketCookie.GetValue()); // Checkout- CookieService is a class that encodes/decodes the basket data.
+
+        var order = _runner.RunAction(new PlaceOrderInDto(acceptTAndCs, checkoutService.UserId, checkoutService.LineItems)); // Runs the business logic with the data it needs from the basket cookie
+
+        if (_runner.HasErrors) return 0; // If the business logic has errors, it returns immediately. The basket cookie is not cleared.
+        
+        // The order was placed successfully, so it clears the basket cookie.
+        checkoutService.ClearAllLineItems();
+        _basketCookie.AddOrUpdateCookie(checkoutService.EncodeForCookie());
+
+        return order.OrderId; // Returns the OrderId, which allows ASP.NET to confirm the order details to the user
+    }
+}
+````
+
+In addition to running the business logic, this class acts as an Adapter pattern; it transforms the data from the basket cookie into a form that the business logic accepts, and on a successful completion, it extracts the `Order` entity class's primary key, `OrderId`, to send back to the ASP.NET Core presentation layer.
+
+This Adapter-pattern role is typical of the code that calls the business logic because a mismatch often occurs between the presentation layer format and the business logic format. This mismatch can be small, as in this example, but you’re likely to need to do some form of adaptation in all but the simplest calls to your business logic. That situation is why my more-sophisticated EfCore.GenericBizRunner library has a built-in Adapter pattern feature.
+
+
+
+![](./diagrams/svg/04_03_placing_an_order_in_the_book_app.drawio.svg)
+
+
+
+From the click of the Purchase button, the ASP.NET Core action, `Place-Order`, in the `CheckoutController` is executed. This action creates a class called `PlaceOrderService` in the service layer, which holds most of the Adapter pattern logic. The caller provides that class with read/write access to the cookies, as the checkout data is held in an HTTP cookie on the user’s device.
+
+`PlaceOrder` method extracts the checkout data from the HTTP cookie and creates a DTO in the form that the business logic needs. Then it calls the generic `BizRunner` to run the business logic that it needs to execute. When the `BizRunner` has returned from the business logic, two routes are possible:
+
+* *The order was successfully placed (no errors).* In this case, the `PlaceOrder` method cleared the basket cookie and returned the `OrderId` of the placed order, so the ASP.NET Core code could show a confirmation page with a summary of the order.
+* *The order was unsuccessful (errors present).* In this case, the `PlaceOrder` method returned immediately to the ASP.NET Core code, which detected errors, redisplayed the checkout page, and added the error messages so that the user could rectify the errors and try again.
+
+
+
+#### The pros and cons of the complex business logic pattern
+
+**ADVANTAGES OF THIS PATTERN**
+
+This pattern follows the DDD approach, which is well respected and widely used. It keeps the business logic "pure" in that it doesn’t know about the database, which has been hidden via the `BizDbAccess` methods that provide a per-business logic repository. Also, the `BizDbAccess` class allows you to test your business logic without using a database, as your unit tests can provide a replacement class (known as a stub or mock) that can provide test data as required.
+
+
+
+**DISADVANTAGES OF THIS PATTERN**
+
+The key disadvantage is you have to write more code to separate the business logic from the database accesses, which takes more time and effort. If the business logic is simple, or if most of the code works on the database, the effort of creating a separate class to handle database accesses isn’t worthwhile.
+
+
+
+### Simple business logic example: ChangePriceOfferService
+
+For simple business logic, you are going to build business logic to handle the addition or removal of a price promotion for a book. This example has business rules, but as you will see, those rules are bound up with a lot of database accesses. The rules are
+
+* If the Book has a PriceOffer, the code should delete the current PriceOffer (remove the price promotion).
+* If the Book doesn’t have a PriceOffer, we add a new price promotion.
+* If the code is adding a price promotion, the PromotionalText must not be null or empty.
