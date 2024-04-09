@@ -2083,7 +2083,10 @@ public class PlaceOrderService
 
         var order = _runner.RunAction(new PlaceOrderInDto(acceptTAndCs, checkoutService.UserId, checkoutService.LineItems)); // Runs the business logic with the data it needs from the basket cookie
 
-        if (_runner.HasErrors) return 0; // If the business logic has errors, it returns immediately. The basket cookie is not cleared.
+        if (_runner.HasErrors) // If the business logic has errors, it returns immediately. The basket cookie is not cleared.
+        {
+            return 0;
+        }
         
         // The order was placed successfully, so it clears the basket cookie.
         checkoutService.ClearAllLineItems();
@@ -2131,6 +2134,218 @@ The key disadvantage is you have to write more code to separate the business log
 
 For simple business logic, you are going to build business logic to handle the addition or removal of a price promotion for a book. This example has business rules, but as you will see, those rules are bound up with a lot of database accesses. The rules are
 
-* If the Book has a PriceOffer, the code should delete the current PriceOffer (remove the price promotion).
-* If the Book doesn’t have a PriceOffer, we add a new price promotion.
-* If the code is adding a price promotion, the PromotionalText must not be null or empty.
+* If the `Book` has a `PriceOffer`, the code should delete the current `PriceOffer` (remove the price promotion).
+* If the Book doesn’t have a `PriceOffer`, we add a new price promotion.
+* If the code is adding a price promotion, the `PromotionalText` must not be null or empty.
+
+
+
+The `ChangePriceOfferService` class contains two methods: a `GetOriginal` method, which is a simple CRUD command to load the `PriceOffer`, and an `AddRemovePriceOffer` method that handles the creation or removal of the `PriceOffer` class for a `Book`. The second method contains business logic.
+
+````c#
+// AddRemovePriceOffer method in ChangePriceOfferService
+public ValidationResult AddRemovePriceOffer(PriceOffer promotion) // This method deletes a PriceOffer if present; otherwise, it adds a new PriceOffer.
+{
+    var book = _context.Books
+        .Include(r => r.Promotion)
+        .Single(k => k.BookId == promotion.BookId);
+
+    if (book.Promotion != null) // If the book has an existing Promotion, removes that promotion
+    {
+        _context.Remove(book.promotion);
+        _context.SaveChanges();
+        return null; // Returns null, which means that the method finished successfully
+    }
+
+    if (string.IsNullOrEmpty(promotion.PromotionalText)) // Validation the check. The PromotionalText must contain some text.
+    {
+        return new ValidationResult(
+            "This field cannot be empty",
+            new []{ nameof(PriceOffer.PromotionalText)}); // Returns an error message, with the property name that was incorrect
+    }
+
+    book.Promotion = promotion; // Assigns the new PriceOffer to the selected book
+    _context.SaveChanges(); // The SaveChanges method updates the database.
+    return null; // The addition of a new price promotion was successful, so the method returns null.
+}
+````
+
+
+
+#### The pros and cons of this business logic pattern
+
+**ADVANTAGES OF THIS PATTERN**
+
+This pattern has little or no set structure, so you can write the code in the simplest way to archive the required business goal. Normally, the code will be shorter than the complex business pattern, which has extra classes to isolate the business logic from the database.
+
+The business logic is also self-contained, with all the code in one place. Unlike the complex business logic example, this business logic handles everything. It doesn’t need a `BizRunner` to execute it, for example, because the code calls `SaveChanges` itself, making it easier to alter, move, and test because it doesn’t rely on anything else.
+
+Also, by putting the business logic classes in the service layer, we can group these simple business logic services in the same folder as the CRUD services related to this business feature. As a result, we can find all the basic code for a feature quickly, because the complex business code is in another project.
+
+
+
+**DISADVANTAGES OF THIS PATTERN**
+
+You don’t have the DDD-inspired approach of the complex business logic pattern to guide you, so the onus is on you to design the business logic in a sound way. Your experience will aid you in picking the best pattern to use and writing the correct code. Simplicity is the key here. If the code is easy to follow, you got it right; otherwise, the code is too complex and needs to follow the complex business logic pattern.
+
+
+
+### Validation business logic example: Adding review to a book, with checks
+
+* The `NumStars` property must be between 0 and 5.
+* The `Comment` property should have some text in it.
+
+````c#
+// The improved CRUD code with business validation checks added
+public IStatusGeneric AddReviewWithChecks(Review review) // This method adds a review to a book, with validation checks on the data.
+{
+    var status = new StatusGenericHandler(); // Creates a status class to hold any errors (The IStatusGeneric interface and StatusGenericHandler class come from a NuGet package called GenericServices.StatusGeneric.
+    if (review.NumStars < 0 || review.NumStars > 5) // Adds an error to the status if the star rating is in the correct range
+    {
+        status.AddError("This must be between 0 and 5.", nameof(Review.NumStars));
+    }
+
+    if (string.IsNullOrWhiteSpace(review.Comment)) // This second check ensures that the user provided some sort of comment.
+    {
+        status.AddError("Please provide a comment with your review.", nameof(Review.Comment));
+    }
+
+    if (!status.IsValid) // If there are any errors, the method returns immediately with those errors.
+    {
+        return status;
+    }
+
+    var book = _context.Books
+        .Include(r => r.Reviews)
+        .Single(k => k.BookId == review.BookId);
+    book.Reviews.Add(review);
+    _context.SaveChanges();
+    return status; // Returns the status, which will be valid if no errors were found
+}
+````
+
+This method is a CRUD method with business validation added, which is typical of this type of business logic. In this case, you used `if-then` code to check the property, but you could use `DataAnnotations` instead. This type of validation is typically done in the frontend, but duplicating the validation of sensitive data in the backend code can make the application more robust.
+
+
+
+#### The pros and cons of this business logic pattern
+
+**ADVANTAGES OF THIS PATTERN**
+
+These validation business logic classes to be the same as CRUD services with some extra checks in them.
+
+
+
+**DISADVANTAGES OF THIS PATTERN**
+
+The only disadvantage is that you need to do something with the status that the pattern returns, such as redisplaying the input form with an error message. But that’s the downside of providing extra validation rather than the validation business logic design.
+
+
+
+### Adding extra features to your business logic handling
+
+This pattern for handling business logic makes it easier to add extra features to your business logic handling. In this section, you’ll add two features:
+
+* Entity class validation to `SaveChanges`
+* Transactions that daisy-chain a series of business logic code
+
+These features use EF Core commands that aren’t limited to business logic. Both features could be used in other areas, so you might want to keep them in mind when you’re working on your application.
+
+
+
+#### Validating the data that you write to the database
+
+The business logic contains lots of validation code, and it’s often useful to move this code into the entity classes as a validation check, especially if the error is related to a specific property in the entity class. This example is another case of breaking a complex set of rules into several parts.
+
+
+
+The `LineItem` entity class has two types of validation added. The first type is a `[Range(min,max)]` attribute, known as Data Annotations, which is added to the `LineNum` property. The second validation method to apply is the `IValidatableObject` interface. This interface requires you to add a method called `IValidatableObject.Validate`, in which you can write your own validation rules and return errors if those rules are violated.
+
+````c#
+// Validation rules applied to the LineNum entity class
+public class LineItem : IValidatableObject // The IValidatableObject interface adds a IValidatableObject.Validate method.
+{
+    public int LineItemId { get; set; }
+    
+    [Range(1,5, ErrorMessage = "This order is over the limit of 5 books.")] // Adds an error message if the LineNum property is not in range
+    public byte LineNum { get; set; }
+
+    public short NumBooks { get; set; }
+
+    public decimal BookPrice { get; set; }
+
+    // relationships
+
+    public int OrderId { get; set; }
+    public int BookId { get; set; }
+
+    public Book ChosenBook { get; set; }
+
+    IEnumerable<ValidationResult> IValidatableObject.Validate(ValidationContext validationContext) // The IValidatableObject interface requires this method to be created.
+    {
+        var currContext = validationContext.GetService(typeof(DbContext)); // Allows access to the current DbContext if necessary to get more information
+        
+        if (ChosenBook.Price < 0) // Moves the Price check out of the business logic into this validation
+        {
+            yield return new ValidationResult($"Sorry, the book '{ChosenBook.Title}' is not for sale.");
+        }
+
+        if (NumBooks > 100) // Extra validation rule: an order for more than 100 books needs to phone in an order.
+        {
+            yield return new ValidationResult("If you want to order a 100 or more books please phone us on 01234-5678-90", new[] { nameof(NumBooks) }); // Returns the name of the property with the error to provide a better error message
+        }
+    }
+}
+````
+
+After adding the validation rule code to your `LineItem` entity class, you need to add a validation stage to EF Core’s `SaveChanges` method, called `SaveChangesWithValidation`. Although the obvious place to put this stage is inside the application’s `DbContext`, you’ll create an extension method instead. This method will allow `SaveChangesWithValidation` to be used on any `DbContext`, which means that you can copy this class and use it in your application.
+
+````c#
+// SaveChangesWithValidation added to the application’s DbContext
+public static ImmutableList<ValidationResult> // SaveChangesWithValidation returns a list of ValidationResults.
+    SaveChangesWithValidation(this DbContext context) // SaveChangesWithValidation is an extension method that takes the DbContext as its input.
+{
+    var result = context.ExecuteValidation(); // The ExecuteValidation is used in SaveChangesWithChecking/Save ChangesWithCheckingAsync.
+
+    if (result.Any()) // If there are errors, return them immediately and don’t call SaveChanges.
+    {
+        return result;
+    }
+
+    context.SaveChanges(); // There aren’t any errors, so I am going to call SaveChanges.
+
+    return result; // Returns the empty set of errors to signify that there are no errors
+}
+````
+
+````c#
+// SaveChangesWithValidation calls ExecuteValidation method
+private static ImmutableList<ValidationResult> ExecuteValidation(this DbContext context)
+{
+    var result = new List<ValidationResult>();
+    foreach (var entry in context.ChangeTracker.Entries() // Uses EF Core’s ChangeTracker to get access to all the entity classes it is tracking
+             .Where(e => (e.State == EntityState.Added) || (e.State == EntityState.Modified))) // Filters the entities that will be added or updated in the database
+    {
+        var entity = entry.Entity;
+        var valProvider = new ValidationDbContextServiceProvider(context); // Implements the IServiceProvider interface and passes the DbContext to the Validate method
+        var valContext = new ValidationContext(entity, valProvider, null);
+        var entityErrors = new List<ValidationResult>();
+        if (!Validator.TryValidateObject(entity, valContext, entityErrors, true)) // The Validator.TryValidateObject is the method that validates each class.
+        {
+            result.AddRange(entityErrors); // Any errors are added to the list.
+        }
+    }
+    return result.ToImmutableList(); // Returns the list of all the errors found (empty if there are no errors)
+}
+````
+
+The main code is in the `ExecuteValidation` method, because you need to use it in sync and async versions of `SaveChangesWithValidation`. The call to `context.ChangeTracker.Entries` calls the DbContext’s `DetectChanges` to ensure that all the changes you’ve made are found before the validation is run. Then the code looks at all the entities that have been added or modified (updated) and validates them all.
+
+The `ValidationDbContextServiceProvider` class is, which implements the `IServiceProvider` interface. This class is used when you create `ValidationContext`, so it is available in any entity classes that have the `IValidatableObject` interface, allowing the `Validate` method to access the current application’s DbContext if necessary. Having access to the current DbContext allows you to create better error messages by obtaining extra information from the database.
+
+You design the `SaveChangesWithValidation` method to return the errors rather than throw an exception. You do this to fit in with the business logic, which returns errors as a list, not an exception. You can create a new `BizRunner` variant, `RunnerWriteDbWithValidation`, that uses `SaveChangesWithValidation` instead of the normal `SaveChanges` and returns errors from the business logic or any validation errors found when writing to the database.
+
+````c#
+// BizRunner variant RunnerWriteDbWithValidation
+
+````
