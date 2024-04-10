@@ -2305,7 +2305,7 @@ After adding the validation rule code to your `LineItem` entity class, you need 
 public static ImmutableList<ValidationResult> // SaveChangesWithValidation returns a list of ValidationResults.
     SaveChangesWithValidation(this DbContext context) // SaveChangesWithValidation is an extension method that takes the DbContext as its input.
 {
-    var result = context.ExecuteValidation(); // The ExecuteValidation is used in SaveChangesWithChecking/Save ChangesWithCheckingAsync.
+    var result = context.ExecuteValidation(); // The ExecuteValidation is used in SaveChangesWithChecking/SaveChangesWithCheckingAsync.
 
     if (result.Any()) // If there are errors, return them immediately and don’t call SaveChanges.
     {
@@ -2347,5 +2347,595 @@ You design the `SaveChangesWithValidation` method to return the errors rather th
 
 ````c#
 // BizRunner variant RunnerWriteDbWithValidation
+public class RunnerWriteDbWithValidation<TIn, TOut>
+{
+    private readonly IBizAction<TIn, TOut> _actionClass;
+    private readonly EfCoreContext _context;
 
+    public IImmutableList<ValidationResult> Errors { get; private set; }
+    public bool HasErrors => Errors.Any(); // This version needs its own Errors/HasErrors properties, as errors come from two sources.
+
+    public RunnerWriteDbWithValidation(IBizAction<TIn, TOut> actionClass, EfCoreContext context) // Handles business logic that conforms to the IBizAction<TIn, TOut> interface
+    {
+        _context = context;
+        _actionClass = actionClass;
+    }
+
+    public TOut RunAction(TIn dataIn) // This method is called to execute the business logic and handle any errors.
+    {
+        var result = _actionClass.Action(dataIn); // Runs the business logic
+        Errors = _actionClass.Errors; // Any errors from the business logic are assigned calls to the local errors list.
+        if (!HasErrors) // If no errors, calls SaveChangesWithChecking
+        {
+            Errors = _context.SaveChangesWithValidation().ToImmutableList(); // Any validation errors are assigned to the Errors list.
+        }
+        return result; // Returns the result that the business logic returned
+    }
+}
 ````
+
+The nice thing about this new variant of the `BizRunner` pattern is that it has exactly the same interface as the original, nonvalidating `BizRunner`. You can substitute `RunnerWriteDbWithValidation<TIn, TOut>` for the original `BizRunner` without needing to change the business logic or the way that the calling method executes the `BizRunner`.
+
+
+
+#### Using transactions to daisy-chain a sequence of business logic code
+
+Business logic can get complex. When it comes to designing and implementing a large or complex piece of business logic, you have three options:
+
+* Option 1 - Write one big method that does everything.
+* Option 2 - Write a few smaller methods, with one overarching method to run them in sequence.
+* Option 3 - Write a few smaller methods, each of which updates the database, but combine them into one Unit Of Work.
+
+Option 1 normally isn’t a good idea because the method will be so hard to understand and refactor. It also has problems if parts of the business logic are used elsewhere, because you could break the DRY (don’t repeat yourself) software principle.
+
+Option 2 can work but can have problems if later stages rely on database items written by earlier stages, which could break the atomic unit rule: when there are multiple changes to the database, they all succeed, or they all fail.
+
+This leaves option 3, which is possible because of a feature of EF Core (and most relational databases) called transactions. "Why you should call `SaveChanges` only once at the end of your changes" introduced the Unit Of Work and showed how `SaveChanges` saves all the changes inside a transaction to make sure that all the changes were saved or, if the database rejected any part of the change, that no changes were saved to the database.
+
+In this case, you want to spread the Unit Of Work over several smaller methods; let’s call them `Biz1`, `Biz2`, and `Biz3`. You don’t have to change `Biz` methods; they still think that they are working on their own and will expect `SaveChanges` to be called when each `Biz` method finishes. But when you create an overarching transaction, all three `Biz` methods, with their `SaveChanges` call, will work as one Unit Of Work. As a result, a database rejection/error in `Biz3` will reject any database changes made by `Biz1`, `Biz2`, and `Biz3`.
+
+This database rejection works because when you use EF Core to create an explicit relational database transaction, it has two effects:
+
+* Any writes to the database are hidden from other database users until you call the transaction’s `Commit` method.
+* If you decide that you don’t want the database writes (say, because the business logic has an error), you can discard all database writes done in the transaction by calling the transaction `RollBack` command.
+
+
+
+![](./diagrams/images/04_01_transaction.png)
+
+
+
+````c#
+// RunnerTransact2WriteDb running two business logic stages in series
+public class RunnerTransact2WriteDb<TIn, TPass, TOut> // The three types are input, class passed from Part1 to Part2, and output.
+    where TOut : class // The BizRunner can return null if there are errors, so it has to be a class.
+{
+    // Defines the generic BizAction for the two business logic parts
+    private readonly IBizAction<TIn, TPass> _actionPart1;
+    private readonly IBizAction<TPass, TOut> _actionPart2;
+    private readonly EfCoreContext _context;
+    
+    // Holds any error information returned by the business logic
+    public IImmutableList<ValidationResult> Errors { get; private set; }
+    public bool HasErrors => Errors.Any();
+
+    public RunnerTransact2WriteDb(
+        EfCoreContext context,
+        IBizAction<TIn, TPass> actionPart1,
+        IBizAction<TPass, TOut> actionPart2) // The constructor takes both business classes and the application DbContext.
+    {
+        _context = context;
+        _actionPart1 = actionPart1;
+        _actionPart2 = actionPart2;
+    }
+
+    public TOut RunAction(TIn dataIn)
+    {
+        using (var transaction = _context.Database.BeginTransaction()) // Starts the transaction within a using statement
+        {
+            var passResult = RunPart(_actionPart1, dataIn); // The private method, RunPart, runs the first business part.
+            if (HasErrors) // If there are errors, returns null. (The rollback is handled by the dispose.)
+            {
+                return null;
+            }
+            var result = RunPart(_actionPart2, passResult); // If the first part of the business logic was successful, runs the second business logic
+
+            if (!HasErrors) // If there are no errors, commits the transaction to the database
+            {
+                transaction.Commit();
+            }
+            return result; // Returns the result from the last business logic
+        } // If commit is not called before the using end, RollBack undoes all the changes.
+    }
+
+    private TPartOut RunPart<TPartIn, TPartOut>(IBizAction<TPartIn, TPartOut> bizPart, TPartIn dataIn)
+        where TPartOut : class // This private method handles running each part of the business logic.
+    {
+        // Runs the business logic and copies the business logic’s Errors
+        var result = bizPart.Action(dataIn);
+        Errors = bizPart.Errors;
+        if (!HasErrors) // If the business logic was successful, calls SaveChanges
+        {
+            _context.SaveChanges();
+        }
+        return result; // Returns the result from the business logic it ran
+    }
+}
+````
+
+In `RunnerTransact2WriteDb` class, you execute each part of the business logic in turn, and at the end of each execution, you do one of the following:
+
+* *No errors* - You call `SaveChanges` to save to the transaction any changes that business logic has run. That save is within a local transaction, so other methods accessing the database won’t see those changes yet. Then you call the next part of the business logic, if there is one.
+* *Has errors* - You copy the errors found by the business logic that just finished to the BizRunner error list and exit the `BizRunner`. At that point, the code steps outside the using clause that holds the transaction, which causes disposal of the transaction. Because no transaction `Commit` has been called, the disposal will cause the transaction to execute its `RollBack` method, which discards the database writes to the transaction. Those writes are never written to the database.
+
+If you’ve run all the business logic with no errors, you call the `Commit` command on the transaction. This command does an atomic update of the database to reflect all the changes to the database that are contained in the local transaction.
+
+
+
+#### Using the RunnerTransact2WriteDb class
+
+To test the `RunnerTransact2WriteDb` class, you’ll split the order-processing code you used earlier into two parts:
+
+* *PlaceOrderPart1* - Creates the Order entity, with no `LineItems`
+* *PlaceOrderPart2* - Adds the `LineItems` for each book bought to the `Order` entity that was created by the `PlaceOrderPart1` class
+
+`PlaceOrderPart1` and `PlaceOrderPart2` are based on the `PlaceOrderAction` code you’ve already seen, so we don’t repeat the business code here. The code changes that are required for `PlaceOrderService` to change over to use the `RunnerTransact2WriteDb BizRunner`. The listing focuses on the part that creates and runs the two stages, `Part1` and `Part2`, with the unchanged parts of the code left out so you can see the changes easily.
+
+````c#
+// The PlaceOrderServiceTransact class showing the changed parts
+public class PlaceOrderServiceTransact // This version of PlaceOrderService uses transactions to execute two business logic classes: PlaceOrderPart1 and PlaceOrderPart2.
+{
+    //… code removed as the same as in listing 4.5
+
+    public PlaceOrderServiceTransact(
+        IRequestCookieCollection cookiesIn,
+        IResponseCookies cookiesOut,
+        EfCoreContext context)
+    {
+        _checkoutCookie = new CheckoutCookie(cookiesIn, cookiesOut);
+        _runner = new RunnerTransact2WriteDb // This BizRunner handles multiple business logic inside a transaction.
+            <PlaceOrderInDto, Part1ToPart2Dto, Order>( // The BizRunner needs the input, the class passed from Part1 to Part2, and the output.
+            context, // The BizRunner needs the application’s DbContext.
+            new PlaceOrderPart1(new PlaceOrderDbAccess(context)), // Provides an instance of the first part of the business logic
+            new PlaceOrderPart2(new PlaceOrderDbAccess(context))); // Provides an instance of the second part of the business logic
+    }
+
+    public int PlaceOrder(bool tsAndCsAccepted)
+    {
+        //… code removed as the same as in listing 4.6
+    }
+}
+````
+
+The important thing to note is that the business logic has no idea whether it’s running in a transaction. You can use a piece of business logic on its own or as part of a transaction. Only the caller of transaction-based business logic, which I call the `BizRunner`, needs to change. Using a transaction makes it easy to combine multiple business logic classes under one transaction without needing to change any of your business logic code.
+
+The advantage of using transactions like this one is that you can split and/or reuse parts of your business logic while making these multiple business logic calls look to your application, especially its database, like one call. We’ve used this approach when we needed to create and then immediately update a complex, multipart entity. Because we needed the Update business logic for other cases, we used a transaction to call the Create business logic followed by the Update business logic, which saved me development effort and kept my code DRY.
+
+The disadvantage of this approach is that it adds complexity to the database access, which can make debugging a little more difficult, or the use of database transactions could cause a performance issue. Also, be aware that if you use the `EnableRetryOnFailure` option to retry database accessed on errors, you need to handle possible multiple calls to your business logic.
+
+
+
+### Summary
+
+* The term *business logic* describes code written to implement real-world business rules. The business logic code can range from the simple to the complex.
+* Depending on the complexity of your business logic, you need to choose an approach that balances how easy it is to solve the business problem against the time it takes you to develop and test your solution.
+* Isolating the database access part of your business logic into another class/project can make the pure business logic simpler to write but take longer to develop.
+* Putting all the business logic for a feature in one class is quick and easy but can make the code harder to understand and test.
+* Creating a standardized interface for your business logic makes calling and running the business logic much simpler for the frontend.
+* Sometimes, it’s easier to move some of the validation logic into the entity classes and run the checks when that data is being written to the database.
+* For business logic that’s complex or being reused, it might be simpler to use a database transaction to allow a sequence of business logic parts to be run in sequence but, from the database point of view, look like one atomic unit.
+
+
+
+
+
+## 5. Using EF Core in ASP.NET Core web applications
+
+* Using EF Core in ASP.NET Core
+* Using dependency injection in ASP.NET Core
+* Accessing the database in ASP.NET Core MVC actions
+* Using EF Core migrations to update a database
+* Using async/await to improve scalability
+
+
+
+### Understanding the architecture of the Book App
+
+![](./diagrams/images/05_01_architecture.png)
+
+
+
+### Understanding dependency injection
+
+*Dependency injection* is a way to link together your application dynamically.
+
+Using DI has lots of benefits, and here are the main ones:
+
+* DI allows your application to link itself dynamically. The DI provider will work out what classes you need and create them in the right order. If one of your classes needs the application’s DbContext, for example, the DI can provide it.
+* Using interfaces and DI together means that your application is more loosely coupled; you can replace a class with another class that matches the same interface. This technique is especially useful in unit testing: you can provide a replacement version of the service with another, simpler class that implements the interface (called *stubbing* or *mocking* in unit tests).
+* Other, more advanced features exist, such as using DI to select which class to return based on certain settings. If you’re building an e-commerce application, in development mode, you might want to use a dummy credit card handler instead of the normal credit card system.
+
+
+
+````c#
+const string connection = "Data Source=(localdb)\\mssqllocaldb;Database=EfCoreInActionDb.Chapter02;Integrated Security=True;";
+var optionsBuilder = new DbContextOptionsBuilder<EfCoreContext>();
+
+optionsBuilder.UseSqlServer(connection);
+var options = optionsBuilder.Options;
+
+using (var context = new EfCoreContext(options))
+{…
+````
+
+That code works but has a few problems. First, you’re going to have to repeat this code for each database access you make. Second, this code uses a fixed database access string, referred to as a *connection string*, which isn’t going to work when you want to deploy your site to a host, because the database location for the hosted database will be different from the database you use for development.
+
+
+
+#### The lifetime of a service created by DI
+
+![](./diagrams/images/05_02_dependency_injection_lifetime.png)
+
+
+
+### Making the application’s DbContext available via DI
+
+#### Providing information on the database’s location
+
+The location and various database configuration settings are typically stored as a *connection string*.
+
+* appsetting.json - Holds the settings that are common to development and production
+* appsettings.Development.json - Holds the settings for the development build
+* appsettings.Production.json - Holds the settings for the production build (when the web application is deployed to a host for users to access it)
+
+````json
+{
+    "ConnectionStrings": {
+        "DefaultConnection": "Server=(localdb)\\mssqllocaldb;Database=EfCoreInActionDb;Trusted_Connection=True"
+    },
+    … other parts removed as not relevant to database access
+}
+````
+
+
+
+#### Registering your application’s DbContext with the DI provider
+
+The application’s DbContext for ASP.NET Core has a constructor that takes a `DbContextOptions<T>` parameter defining the database options. That way, the database connection string can change when you deploy your web application.
+
+````c#
+public class EfCoreContext : DbContext
+{
+    //… properties removed for clarity
+
+    public EfCoreContext(
+        DbContextOptions<EfCoreContext> options)
+        : base(options) {}
+    
+    //… other code removed for clarity
+}
+````
+
+
+
+````c#
+// Registering your DbContext in ASP.NET Core’s Startup class
+public void ConfigureServices(IServiceCollection services) // This method in the Startup class sets up services.
+{
+    services.AddControllersWithViews(); // Sets up a series of services to use with controllers and Views
+
+    var connection = Configuration.GetConnectionString("DefaultConnection"); // You get the connection string from the appsettings.json file, which can be changed when you deploy.
+    
+    services.AddDbContext<EfCoreContext>(options => options.UseSqlServer(connection)); // Configures the application’s DbContext to use SQL Server and provide the connection
+
+    //… other service registrations removed
+}
+````
+
+When you use the type `EfCoreContext` in places where DI intercepts, the DI provider will create an instance of the application’s `DbContext`, using the `DbContextOptions<EfCoreContext>` options. Or if you ask for multiple instances in the same HTTP request, the DI provider will return the same instances.
+
+
+
+#### Registering a DbContext Factory with the DI provider
+
+Typically, you use the `AddDbContextFactory` method only with Blazor in the frontend or in applications where you cannot control the parallel access to the same application’s DbContext, which breaks the thread-safe rule. Many other applications, such as ASP.NET Core, manage parallel accesses for you, so you can obtain an instance of the application’s DbContext via DI.
+
+````c#
+// Registering a DbContext factory in ASP.NET Core’s Startup class
+public void ConfigureServices(IServiceCollection services) // This method in the Startup class sets up services.
+{
+    services.AddControllersWithViews(); // Sets up a series of services to use with controllers and Views
+
+    var connection = Configuration.GetConnectionString("DefaultConnection"); // You get the connection string from the appsettings.json file, which can be changed when you deploy.
+
+    services.AddDbContextFactory<EfCoreContext>(options => options.UseSqlServer(connection)); // Configures the DbContext factory to use SQL Server and provide the connection
+
+    //… other service registrations removed
+}
+````
+
+
+
+### Calling your database access code from ASP.NET Core
+
+![](./diagrams/images/05_03_db_access_from_app.png)
+
+
+
+````c#
+// The Index action in the HomeController displays the list of books
+public class HomeController : Controller
+{
+    private readonly EfCoreContext _context;
+
+    public HomeController(EfCoreContext context) // The application’s DbContext is provided by ASP.NET Core via DI.
+    {
+        _context = context;
+    }
+
+    public IActionResult Index // ASP.NET action, called when the home page is called up by the user
+        (SortFilterPageOptions options) // The options parameter is filled with sort, filter, and page options via the URL.
+    {
+        var listService = new ListBooksService(_context); // ListBooksService is created by using the application’s DbContext from the private field _context.
+
+        var bookList = listService
+            .SortFilterPage(options) // The SortFilterPage method is called with the sort, filter, and page options provided.
+            .ToList(); // The ToList() method executes the LINQ commands, causing EF Core to translate the LINQ into the appropriate SQL to access the database and return the result as a list.
+
+        return View(new BookListCombinedDto(options, bookList)); // Sends the options (to fill in the controls at the top of the page) and the list of BookListDtos to display as an HTML table
+    }
+}
+````
+
+
+
+#### Improving registering your database access classes as services
+
+The `NetCore.AutoRegisterDi` library scans one or more assembles; looks for standard public, nongeneric classes that have public interfaces; and registers them with NET Core’s DI provider. It has some simple filtering and some lifetime-setting capabilities, but not much more. But this simple piece of code gives you two benefits over manually registering your classes/interfaces with the DI provider:
+
+* It saves you time because you don’t have to register every interface/class manually.
+* More important, it automatically registers your interfaces/classes so that you don’t forget.
+
+````c#
+// Using NetCore.AutoRegisterDi to register classes as DI services
+// You can get references to the assemblies by providing a class that is in that assembly.
+var assembly1ToScan = Assembly.GetAssembly(typeof(ass1Class));
+var assembly2ToScan = Assembly.GetAssembly(typeof(ass2Class));
+
+service.RegisterAssemblyPublicNonGenericClasses(assembly1ToScan, assembly2ToScan) // This method takes zero to many assemblies to scan. If no assembly is provided, it will scan the calling assembly.
+    .Where(c => c.Name.EndsWith("Service")) // This optional filter system allows you to filter the classes that you want to register.
+    .AsPublicImplementedInterfaces(); // Registers all the classes that have public interfaces. By default, the services are registered as transient, but you can change that registration by adding a ServiceLifetime parameter or attributes.
+````
+
+````c#
+// Extension method in ServiceLayer that handles all the DI service registering
+public static class NetCoreDiSetupExtensions
+{
+    public static void RegisterServiceLayerDi // This class is in the ServiceLayer.
+        (this IServiceCollection services) // The NetCore.AutoRegisterDi library understands NET Core DI, so you can access the IServiceCollection interface.
+    {
+        services.RegisterAssemblyPublicNonGenericClasses() // Calling the RegisterAssemblyPublicNonGenericClasses method without a parameter means that it scans the calling assembly.
+            .AsPublicImplementedInterfaces(); // This method will register all the public classes with interfaces with a Transient lifetime.
+    }
+}
+````
+
+````c#
+// Calling all your registration methods in the projects that need them
+public void ConfigureServices(IServiceCollection services) // This method in the Startup class sets up services for ASP.NET Core.
+{
+    //… other registrations left out
+
+    services.RegisterBizDbAccessDi();
+    services.RegisterBizLogicDi();
+    services.RegisterServiceLayerDi();
+}
+````
+
+
+
+### Using EF Core’s migration feature to change the database’s structure
+
+````c#
+// ASP.NET Core Program class, including a method to migrate the database
+public class Program
+{
+    public static async Task Main(string[] args)
+    {
+        var host = CreateHostBuilder(args).Build(); // This call runs the Startup.Configure method, which sets up the DI services you need to setup/migrate your database.
+        await host.MigrateDatabaseAsync(); // Calls your extension method to migrate your database
+        await host.RunAsync(); // At the end, you start the ASP.NET Core application.
+    }
+    //… other code not shown
+}
+````
+
+````c#
+// The MigrateDatabaseAsync extension method to migrate the database
+public static async Task MigrateDatabaseAsync(this IHost webHost) // Creates an extension method that takes in IHost
+{
+    using (var scope = webHost.Services.CreateScope()) // Creates a scoped service provider. After the using block is left, all the services will be unavailable. This approach is the recommended way to obtain services outside an HTTP request.
+    {
+        // Creates an instance of the application’s DbContext that has a lifetime of only the outer using statement
+        var services = scope.ServiceProvider;
+        using (var context = services.GetRequiredService<EfCoreContext>())
+        {
+            try
+            {
+                await context.Database.MigrateAsync(); // Calls EF Core’s MigrateAsync command to apply any outstanding migrations at startup
+                // You can add a method here to handle complex seeding of the database if required.
+                //Put any complex database seeding here
+            }
+            catch (Exception ex) // If an exception occurs, you log the information so that you can diagnose it.
+            {
+                var logger = services.GetRequiredService<ILogger<Program>>();
+                logger.LogError(ex, "An error occurred while migrating the database.");
+                throw; // Rethrows the exception because you don’t want the application to carry on if a problem with migrating the database occurs
+            }
+        }
+    }
+}
+````
+
+
+
+In addition to migrating the database, you may want to add default data to the database at the same time, especially if it’s empty. This process, called seeding the database, covers adding initial data to the database or maybe updating data in an existing database.
+
+The other option is to run some code when the migration has finished. This option is useful if you have dynamic data or complex updates that the migration seeding can’t handle.
+
+````c#
+// Example MigrateAndSeed extension method
+public static async Task SeedDatabaseAsync(this EfCoreContext context) // Extension method that takes in the application’s DbContext
+{
+    if (context.Books.Any()) return; // If there are existing books, you return, as you don’t need to add any.
+    
+    context.Books.AddRange(EfTestData.CreateFourBooks()); // Database has no books, so you seed it; in this case, you add the default books.
+    await context.SaveChangesAsync(); // SaveChangesAsync is called to update the database.
+}
+````
+
+
+
+### Using async/await for better scalability
+
+![](./diagrams/images/05_04_async.png)
+
+
+
+````c#
+// The async Index action method from the HomeController
+public async Task<IActionResult> Index(SortFilterPageOptions options) // You make the Index action method async by using the async keyword, and the returned type has to be wrapped in a generic task.
+{
+    var listService = new ListBooksService(_context);
+    
+    public async Task<IActionResult> Index(SortFilterPageOptions options)
+    {
+        var listService = new ListBooksService(_context);
+        
+        var bookList = await listService // You must await the result of the ToListAsync method, which is an async command.
+            .SortFilterPage(options)
+            .ToListAsync(); // You can change SortFilterPage to async by replacing .ToList() with .ToListAsync().
+        
+        return View(new BookListCombinedDto(options, bookList));
+    }
+}
+````
+
+
+
+### Running parallel tasks: How to provide the DbContext
+
+Parallel tasks are useful in various scenarios. Say you’re accessing multiple, external sources that you need to wait for before they return a result. By using multiple tasks running in parallel, you gain performance improvements. In another scenario, you might have a long-running task, such as processing order fulfillment in the background. You use parallel tasks to avoid blocking the normal flow and making your website look slow and unresponsive.
+
+
+
+![](./diagrams/images/05_05_parallel.png)
+
+
+
+If you want to run any code that uses EF Core in parallel, you can’t use the normal approach of getting the application’s DbContext because EF Core’s DbContext isn’t thread-safe; you can’t use the same instance in multiple tasks. EF Core will throw an exception if it finds that the same DbContext instance is used in two tasks.
+
+In ASP.NET Core, the correct way to get a DbContext to run in the background is by using a DI scoped service. This scoped service allows you to create, via DI, a DbContext that’s unique to the task that you’re running. To do this, you need to do three things:
+
+* Get an instance of the `IServiceScopeFactory` via constructor injection.
+* Use the `IServiceScopeFactory` to a *scoped DI service*.
+* Use the scoped DI service to obtain an instance of the application’s DbContext that is unique to this scope.
+
+The following listing shows the method in your background task that uses the `IServiceScopeFactory` to obtain a unique instance of your application’s DbContext. This method counts the number of `Reviews` in the database and logs that number.
+
+
+
+````c#
+// The method inside the background service that accesses the database
+private async Task DoWorkAsync(CancellationToken stoppingToken) // The IHostedService will call this method when the set period has elapsed.
+{
+    using (var scope = _scopeFactory.CreateScope()) // Uses the ScopeProviderFactory to create a new DI scoped provider
+    {
+        var context = scope.ServiceProvider.GetRequiredService<EfCoreContext>(); // Because of the scoped DI provider, the DbContext instance created will be different from all the other instances of the DbContext.
+        var numReviews = await context.Set<Review>()
+            .CountAsync(stoppingToken);
+        _logger.LogInformation("Number of reviews: {numReviews}", numReviews);
+    }
+}
+````
+
+The important point of the code is that you provide `ServiceScopeFactory` to each task so that it can use DI to get a unique instance of the DbContext (and any other scoped services). In addition to solving the DbContext thread-safe issue, if you are running the method repeatedly, it’s best to have a new instance of the application’s DbContext so that data from the last run doesn’t affect your next run.
+
+
+
+#### Running a background service in ASP.NET Core
+
+````c#
+// An ASP.NET Core background service that calls DoWorkAsync every hour
+public class BackgroundServiceCountReviews : BackgroundService // Inheriting the BackgroundService class means that this class can run continuously in the background.
+{
+    private static TimeSpan _period = new TimeSpan(0,1,0,0); // Holds the delay between each call to the code to log the number of reviews
+
+    // The IServiceScopeFactory injects the DI service that you use to create a new DI scope.
+    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly ILogger<BackgroundServiceCountReviews> _logger;
+
+    public BackgroundServiceCountReviews(
+        IServiceScopeFactory scopeFactory,
+        ILogger<BackgroundServiceCountReviews> logger)
+    {
+        _scopeFactory = scopeFactory;
+        _logger = logger;
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken) // The BackgroundService class has a ExecuteAsync method that you override to add your own code.
+    {
+        while (!stoppingToken.IsCancellationRequested) // This loop repeatably calls the DoWorkAsync method, with a delay until the next call is made.
+        {
+            await DoWorkAsync(stoppingToken);
+            await Task.Delay(_period, stoppingToken);
+        }
+    }
+
+    private async Task DoWorkAsync…
+    //see listing 5.16
+}
+````
+
+You need to register your background class with the NET DI provider, using the `AddHostedService` method. When the Book App starts, your background task will be run first, but when your background task gets to a place where it calls an async method and uses the `await` statement, control goes back to the ASP.NET Core code, which starts up the web application.
+
+
+
+#### Other ways of obtaining a new instance of the application’s DbContext
+
+Although DI is the recommended method to get the application’s DbContext, in some cases, such as a console application, DI may not be configured or available. In these cases, you have two other options that allow you to obtain an instance of the application’s DbContext:
+
+* Move your configuration of the application’s DbContext by overriding the `OnConfiguring` method in the DbContext and placing the code to set up the DbContext there.
+* Use the same constructor used for ASP.NET Core and manually inject the database options and connection string, as you do in unit tests.
+
+The downside of the first option is it uses a fixed connection string, so it always accesses the same database, which could make deployment to another system difficult if the database name or options change. The second option - providing the database options manually - allows you to read in a connection string from the appsettings.json or a file inside your code.
+
+Another issue to be aware of is that each call will give you a new instance of the application’s DbContext. At times you might want to have the same instance of the application’s DbContext to ensure that tracking changes works. You can work around this issue by designing your application so that one instance of the application’s DbContext is passed between all the code that needs to collaborate on database updates.
+
+
+
+### Summary
+
+* ASP.NET Core uses dependency injection (DI) to provide the application’s DbContext. With DI, you can dynamically link parts of your application by letting DI create class instances as required.
+* The `ConfigureServices` method in ASP.NET Core’s `Startup` class is the place to configure and register your version of the application’s DbContext by using a connection string that you place in an ASP.NET Core application setting file.
+* To get an instance of the application’s DbContext to use with your code via DI, you can use constructor injection. DI will look at the type of each of the constructor’s parameters and attempt to find a service for which it can provide an instance.
+* Your database access code can be built as a service and registered with the DI. Then you can inject your services into the ASP.NET Core action methods via parameter injection: the DI will find a service that finds the type of an ASP.NET Core action method’s parameter that’s marked with the attribute `[FromServices]`.
+* Deploying an ASP.NET Core application that uses a database requires you to define a database connection string that has the location and name of the database on the host.
+* EF Core’s migration feature provides one way to change your database if your entity classes and/or the EF Core configuration change. The `Migrate` method has some limitations when used on cloud hosting sites that run multiple instances of your web application.
+* Async/await tasking methods on database access code can make your website handle more simultaneous users, but performance could suffer, especially on simple database accesses.
+* If you want to use parallel tasks, you need to provide a unique instance of the application’s DbContext by creating a new scoped DI provider.
+
+
+
+
+
+## 6. Tips and techniques for reading and writing with EF Core
+
+* Selecting the right approach to read data from the database
+* Writing queries that perform well on the database side
+* Avoiding problems when you use Query Filters and special LINQ commands
+* Using AutoMapper to write Select queries more quickly
+* Writing code to quickly copy and delete entities in the database
+
+
+
