@@ -2939,3 +2939,691 @@ Another issue to be aware of is that each call will give you a new instance of t
 
 
 
+### Reading from the database
+
+#### Understanding what AsNoTracking and its variant do
+
+* `AsNoTracking` produces a quicker query time but doesn’t always represent the exact database relationships.
+* `AsNoTrackingWithIdentityResolution` typically is quicker than a normal query but slower than the same query with `AsNoTracking`. The improvement is that the database relationships are represented correctly, with a entity class instance for each row in the database.
+
+The `AsNoTracking` method doesn’t execute the feature called identity resolution that ensures that there is only one instance of an entity per row in the database. Not applying the identity resolution feature to the query means that you might get an extra instances of entity classes.
+
+
+
+![](./diagrams/images/06_01_AsNoTracking_vs_AsNoTrackingWithIdentityResolution.png)
+
+
+
+If you are using the relationships, such as to create a report of books which linked to other books by the same author, the `AsNoTracking` method might cause a problem. In a case like that one, you should use the `AsNoTrackingWithIdentityResolution` method.
+
+
+
+#### Reading in hierarchical data efficiently
+
+
+
+![](./diagrams/images/06_02_reading_in_hierarchical_data_efficiently.png)
+
+
+
+You could use `.Include(x => x.WorksForMe).ThenInclude(x => x.WorksForMe)` and so on, but a single `.Include(x => x.WorksForMe)` is enough, as the relational fixup can work out the rest. The next listing provides an example in which you want a list of all the employees working in development, with their relationships. The LINQ in this query is translated into one SQL query.
+
+
+
+````c#
+// Loading all the employees working in development, with their relationships
+var devDept = context.Employees // The database holds all the Employees.
+    .Include(x => x.WorksForMe) // One Include is all you need; relational fixup will work out what is linked to what.
+    .Where(x => x.WhatTheyDo.HasFlag(Roles.Development)) // Filters the employees down to ones who work in development
+    .ToList();
+````
+
+
+
+#### Understanding how the Include method works
+
+The simplest way to load an entity class with its relationships is to use the `Include` method, which is easy to use and normally produces an efficient database access. But it is worth knowing how the `Include` method works and what to watch out for. The `Include` method has a negative effect on performance for some complex queries.
+
+
+
+````c#
+var query = context.Books
+    .Include(x => x.Reviews)
+    .Include(x => x.AuthorsLink)
+	    .ThenInclude(x => x.Author);
+````
+
+![](./diagrams/images/06_03_include_performance.png)
+
+
+
+Performance problems occur if you have multiple collection relationships that you want to include in the query, and some of those relationships have a large number of entries in the collection. This figure shows that the number of rows read in via EF Core versions before 3.0 is calculated by adding the rows. But in EF Core 3.0 and later, the number of rows read is calculated by multiplying the rows. Suppose that you are loading 3 relationships, each of which has 100 rows. The 3.0 version of EF Core would read in 100+100+100 = 300 rows, but EF Core 3.0 and later would use 100 * 100 * 100 = 1 million rows.
+Fortunately, EF Core 5 provides a method called `AsSplitQuery` that tells EF Core to read each `Include` separately, as in the following listing.
+
+````c#
+// Reading relationships separately and letting relational fixup join them up
+var result = context.ManyTops
+    .AsSplitQuery() // Causes each Include to be loaded separately, thus stopping the multiplication problem
+    .Include(x => x.Collection1)
+    .Include(x => x.Collection2)
+    .Include(x => x.Collection3)
+    .Single(x => x.Id == id)
+````
+
+
+
+If you find that a query that uses multiple `Includes` is slow, it could be because two or more included collections contain a lot of entries. In this case, add the `AsSplitQuery` method before your `Includes` to swap to the separate load of every included collection.
+
+
+
+#### Making loading navigational collections fail-safe
+
+For any navigational property that uses a collection, developers assign an empty collection to a collection navigational property, either in the constructor or via an assignment to the property:
+
+````c#
+// A entity class with navigational collections set to an empty collection
+public class BookNotSafe
+{
+    public int Id { get; set; }
+    public ICollection<ReviewNotSafe> Reviews { get; set; } // This navigational property called Reviews has many entries—that is, a one-to-many relationship.
+
+    public BookNotSafe()
+    {
+        Reviews = new List<ReviewNotSafe>(); // The navigational property called Reviews is preloaded with an empty collection, making it easier to add ReviewNotSave to the navigational property when the primary entity, BookNotSafe, is created.
+    }
+}
+````
+
+Developers do this to make it easier to add entries to a navigational collection on a newly created instance of an entity class. The downside is that if you forget the Include to load a navigational property collection, you get an empty collection when the database might have data that should fill that collection.
+
+You have another problem if you want to replace the whole collection. If you don’t have the Include, the old entries in the database aren’t removed, so you get a combination of new and old entities, which is the wrong answer. In the following code snippet, instead of replacing the two existing Reviews, the database ends up with three Reviews:
+
+````c#
+var book = context.Books
+    //missing .Include(x => x.Reviews)
+    .Single(p => p.BookId == twoReviewBookId);
+
+book.Reviews = new List<Review>{ new Review{ NumStars = 1}};
+context.SaveChanges();
+````
+
+
+
+Another good reason not to assign an empty collection to a collection is performance. If you need to use explicit loading of a collection, for example, and you know that it’s already loaded because it’s not null, you can skip doing the (redundant) explicit loading.
+
+So we won’t preload any navigational properties with a collection. Instead of failing silently when we leave out the `Include` method, we get a `NullReferenceException` when the code accesses the navigational collection property. That result is much better than getting the wrong data.
+
+
+
+#### Using Global Query Filters in real-world situations
+
+**SOFT DELETE IN REAL-WORLD APPLICATIONS**
+
+If you soft-delete a `Book`, for example, the `PriceOffer`, `Reviews`, and `AuthorLinks` are still there, which can cause problems if you don’t think things through. You built a background process that logged the number of `Reviews` in the database on every hour. If you soft-deleted a `Book` that had ten `Reviews`, you might expect the number of `Reviews` to go down, it wouldn’t. You need a way to handle this problem.
+
+A pattern in Domain-Driven Design (DDD) called Root and Aggregates helps you in this situation. In this pattern, the `Book` entity class is the Root, and the `PriceOffer`, `Reviews`, and `AuthorLinks` are Aggregates. This pattern goes on to say you should access Aggregates only via the Root. This process works well with soft deletes because if the `Book` (Root) is soft-deleted, you can’t access its Aggregates. So the correct code for counting all the `Reviews`, taking the soft delete into account, is
+
+````c#
+var numReviews = context.Books.SelectMany(x => x.Reviews).Count();
+````
+
+
+
+Another way to solve the Root/Aggregate problem with soft deletes is to mimic the cascade delete behavior when setting soft deletes, which is quite complex to do.
+
+
+
+The second thing to consider is that you shouldn’t apply soft deletes to a one-to-one relationship. You will have problems if you try to add a new one-to-one entity when an existing but soft-deleted entity is already there. If you had a soft-deleted `PriceOffer`, which has a one-to-one relationship with the Book, and tried to add another `PriceOffer` to the `Book`, you would get a database exception. A one-to-one relationship has a unique index on the foreign key `BookId`, and a (soft-deleted) `PriceOffer` was taking that slot.
+
+The soft-delete feature is useful because users can mistakenly delete the wrong data. But being aware of the issues allows you to plan how to handle them in your applications. You can use the Root/Aggregate approach and don’t allow soft deletes of one-to-one dependent entities.
+
+
+
+**USING QUERY FILTERS TO CREATE MULTITENANT SYSTEMS**
+
+A multitenant system is one in which different users or groups of users have data that should be accessed only by certain users. Each tenant has a unique DataKey. A tenant might be an individual user or, more likely, a group of users. Software as a Service (SaaS) application that provides stock control for lots of retail companies.
+
+When a user selects a book to buy in the Book App, a basket cookie is created to hold each book in the user’s basket, plus a `UserId`. This basket cookie is used if the user clicks the My Orders menu item to show only the Orders from this user. The following code takes the `UserId` from the basket cookie and uses a Query Filter to return only the Orders that the user created. Two main parts make this code work:
+
+* A `UserIdService` gets the `UserId` from the basket cookie.
+* The `IUserIdService` is injected via the application’s DbContext constructor and used to access the current user.
+
+
+
+![](./diagrams/images/06_04_multitenant.png)
+
+
+
+The following listing shows the `UserIdService` code, which relies on the `IHttpContextAccessor` to access the current HTTP request.
+
+````c#
+// UserIdService that extracts the UserId from the basket cookie
+public class UserIdService : IUserIdService
+{
+    // The IHttpContextAccessor is a way to access the current HTTP context. To use it, you need to register it in the Startup class, using the command services.AddHttpContextAccessor().
+    private readonly IHttpContextAccessor _httpAccessor;
+
+    public UserIdService(IHttpContextAccessor httpAccessor)
+    {
+        _httpAccessor = httpAccessor;
+    }
+
+    public Guid GetUserId()
+    {
+        // In some cases, the HTTPContext could be null, such as a background task. In such a case, you provide an empty GUID.
+        var httpContext = _httpAccessor.HttpContext;
+        if (httpContext == null)
+        {
+            return Guid.Empty;
+        }
+
+        // Uses existing services to look for the basket cookie. If there is no cookie, the code returns an empty GUID.
+        var cookie = new BasketCookie(httpContext.Request.Cookies);
+        if (!cookie.Exists())
+        {
+            return Guid.Empty;
+        }
+
+        // If there is a basket cookie, creates the CheckoutCookieService, which extracts the UserId and returns it
+        var service = new CheckoutCookieService(cookie.GetValue());
+        return service.UserId;
+    }
+}
+````
+
+When you have a value to act as a DataKey, you need to provide it to the application’s DbContext. The typical way is via DI constructor injection; the injected service provides a way to get the DataKey. For our example, we are using the `UserId`, taken from the basket cookie, to serve as a DataKey. Then you use that UserId in a Query Filter applied to the `CustomerId` property in the `Order` entity class, which contains the `UserId` of the person who created the `Order`. Any query for `Order` entities will return only `Orders` created by the current user. The following listing shows how to inject the `UserIdService` service into the application’s DbContext and then use that `UserId` in a Query Filter.
+
+````c#
+// Book App’s DbContext with injection of UserId and Query Filter
+public class EfCoreContext : DbContext
+{
+    private readonly Guid _userId; // This property holds the UserId used in the Query Filter on the Order entity class.
+
+    public EfCoreContext(DbContextOptions<EfCoreContext> options, // Normal options for setting up the application’s DbContext
+                         IUserIdService userIdService = null) // Sets the UserIdService. Note that this parameter is optional, which makes it much easier to use in unit tests that don’t use the Query Filter.
+        : base(options)
+    {
+        _userId = userIdService?.GetUserId()
+            ?? new ReplacementUserIdService().GetUserId(); // Sets the UserId. If the UserId is null, a simple replacement version provides the default Guid.Empty value.
+    }
+
+    public DbSet<Book> Books { get; set; }
+    //… rest of DbSet<T> left out
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder) // The method where you configure EF Core and put your Query Filters
+    {
+        //… other configuration left out for clarity
+        
+        modelBuilder.Entity<Book>()
+            .HasQueryFilter(p => !p.SoftDeleted); // Soft-delete Query Filter
+        modelBuilder.Entity<Order>()
+            .HasQueryFilter(x => x.CustomerName == _userId); // Order query filter, which matches the current UserId obtained from the cookie basket with the CustomerId in the Order entity class
+    }
+}
+````
+
+Every instance of the application’s DbContext gets the `UserId` of the current user, or an empty GUID if they never "bought" a book. Whereas the DbContext’s configuration is set up on first use and cached, the lambda Query Filter is linked to a live field called _userId. The query filter is fixed, but the _userId is dynamic and can change on every instance of the DbContext.
+
+But it’s important that the Query Filter not be put in a separate configuration class, because the _userId would become fixed to the `UserId` provided on first use. You must put the lambda query somewhere that it can get the dynamic _userId variable. In this case, we place it in the `OnModelCreating` method inside the application’s DbContext, which is fine.
+
+If you have an ASP.NET Core application that users log in to, you can use `IHttpContextAccessor` to access the current `ClaimPrincipal`. The `ClaimPrincipal` contains a list of `Claims` for the logged-in user, including their `UserId`, which is stored in a claim with the name defined by the system constant `ClaimTypes.NameIdentifier`. Or you could add a new `Claim` to the user on login to provide a DataKey that is used in the Query Filter.
+
+
+
+#### Considering LINQ commands that need special attention
+
+EF Core does a great job of mapping LINQ methods to SQL, the language of most relational databases. But three types of LINQ methods need special handling:
+
+* Some LINQ commands need extra code to make them fit the way that the database works, such as the LINQ `Average`, `Sum`, `Max`, and other aggregate commands needed to handle a return of `null`. Just about the only aggregate that won’t return `null` is `Count`.
+* Some LINQ commands can work with a database, but only within rigid boundaries because the database doesn’t support all the possibilities of the command. An example is the `GroupBy` LINQ command; the database can have only a simple key, and there are significant limitations on the `IGrouping` part.
+* Some LINQ commands have a good match to a database feature, but with some limitations on what the database can return. Examples are `Join` and `GroupJoin`.
+
+The problem is that if you get your LINQ slightly wrong, you will get the *could not be translated* exception. The message might not be too helpful in diagnosing the problem.
+
+
+
+**AGGREGATES NEED A NULL (APART FROM COUNT)**
+
+You are likely to use the LINQ aggregates `Max`, `Min`, `Sum`, `Average`, `Count`, and `CountLong`, so here are some pointers:
+
+* The `Count` and `CountLong` methods work fine if you count something sensible in the database, such as a row or relational links such as the number of `Reviews` for a `Book`.
+* The LINQ aggregates `Max`, `Min`, `Sum`, and `Average` need a nullable result, such as `context.Books.Max(x => (decimal?)x.Price)`. If the source (`Price` in this example) isn’t nullable, you must have cast to the nullable version of the source. Also, if you are using Sqlite for unit testing, remember that it doesn’t support decimal, so you would get an error even if you used the nullable version.
+* You can’t use the LINQ Aggregate method directly on the database because it does a per-row calculation.
+
+
+
+**GROUPBY LINQ COMMAND**
+
+When `GroupBy` is used on an SQL database, the `Key` part needs to be a scalar value (or values) because that’s what the SQL `GROUP BY` supports. The `IGrouping` part can be a selection of data, including some LINQ commands. You need to follow a `GroupBy` command with an execute command such as `ToList`. Anything else seems to cause the could not be translated exception.
+
+
+
+````c#
+var something = await _context.SomeComplexEntity
+    .GroupBy(x => new { x.ItemID, x.Item.Name })
+    .Select(x => new
+    {
+        Id = x.Key.ItemID,
+        Name = x.Key.Name,
+        MaxPrice = x.Max(o => (decimal?)o.Price)
+    })
+    .ToListAsync();
+````
+
+
+
+#### Using AutoMapper to automate building Select queries
+
+AutoMapper’s By Convention configuration, where it maps properties in the source—Book class, in this case—to the DTO properties by matching them by the type and name of each property. AutoMapper can automatically map some relationships.
+
+
+
+````c#
+// Handcoded version
+var dto = context.Books
+    .Select(p => new ChangePubDateDto
+    {
+        BookId = p.BookId,
+        Title = p.Title,
+        PublishedOn = p.PublishedOn
+    })
+    .Single(k => k.BookId == lastBook.BookId);
+
+// AutoMapper version
+var dto = context.Books
+    .ProjectTo<ChangePubDateDtoAm>(config)
+    .Single(x => x.BookId == lastBook.BookId);
+````
+
+
+
+Four by-convention configurations of using AutoMapper:
+
+* *Same type and same name mapping* - Properties are mapped from the entity class to DTO properties by having the same type and same name.
+* *Trimming properties* - By leaving out properties that are in the entity class from the DTO, the `Select` query won’t load those columns.
+* *Flattening relationships* - The name in the DTO is a combination of the navigational property name and the property in the navigational property type. The `Book` entity reference of `Promotion.NewPrice`, for example, is mapped to the DTO's `PromotionNewPrice` property.
+* *Nested DTOs* - This configuration allows you to map collections from the entity class to a DTO class, so you can copy specific properties from the entity class in a navigational collection property.
+
+
+
+**FOR SIMPLE MAPPINGS, USE THE [AUTOMAP] ATTRIBUTE**
+
+Using AutoMapper’s `ProjectTo` method is straightforward, but it relies on the configuration of AutoMapper, which is more complex. The `AutoMap` attribute, which allows by convention configuration of simple mappings.
+
+
+
+````c#
+[AutoMap(typeof(Book))]
+public class ChangePubDateDtoAm
+{
+    public int BookId { get; set; }
+    public string Title { get; set; }
+    public DateTime PublishedOn { get; set; }
+}
+````
+
+
+
+Classes mapped via `AutoMap` attribute use AutoMapper’s By Convention configuration, with a few parameters and attributes to allow some tweaking. By convention can do quite a lot, but certainly not all that you might need. For that, you need AutoMapper’s `Profile` class.
+
+
+
+**COMPLEX MAPPINGS NEED A PROFILE CLASS**
+
+When AutoMapper’s By Convention approach isn’t enough, you need to build an AutoMapper `Profile` class, which allows you to define the mapping for properties that aren’t covered by the By Convention approach. You have to create a `MappingConfiguration`. You have a few ways to do this, but typically, you use AutoMapper’s `Profile` class, which is easy to find and register. The following listing shows a class that inherits the `Profile` class and sets up the mappings that are too complex for AutoMapper to deduce.
+
+
+
+````c#
+// AutoMapper Profile class configuring special mappings for some properties
+public class BookListDtoProfile : Profile // Your class must inherit the AutoMapper Profile class. You can have multiple classes that inherit Profile.
+{
+    public BookListDtoProfile()
+    {
+        CreateMap<Book, BookListDto>() // Sets up the mapping from the Book entity class to the BookListDto
+            .ForMember(p => p.ActualPrice,
+                       m => m.MapFrom(s => s.Promotion == null ? s.Price : s.Promotion.NewPrice)) // The Actual price depends on whether the Promotion has a PriceOffer.
+            .ForMember(p => p.AuthorsOrdered,
+                       m => m.MapFrom(s => string.Join(", ", s.AuthorsLink.Select(x => x.Author.Name)))) // Gets the list of Author names as a comma-delimited string
+            .ForMember(p => p.ReviewsAverageVotes,
+                       m => m.MapFrom(s => s.Reviews.Select(y => (double?)y.NumStars).Average())); // Contains the special code needed to make the Average method run in the database
+    }
+}
+````
+
+This code sets up three of the nine properties, with the other six properties using AutoMapper’s By Convention approach, which is why some of the names of the properties in the `ListBookDto` class are long. The DTO property called `PromotionPromotionalText`, for example, has that name because it maps by convention to the navigational property `Promotion` and then to the `PromotionalText` property in the `PriceOffer` entity class.
+
+You can add lots of `CreateMap` calls in one `Profile`, or you can have multiple `Profiles`. `Profiles` can get complex, and managing them is the main pain point involved in using AutoMapper.
+
+
+
+**REGISTER AUTOMAPPER CONFIGURATIONS**
+
+The last stage is registering all the mapping with dependency injection. Fortunately, AutoMapper has a NuGet package called `AutoMapper.Extensions.Microsoft.DependencyInjection` containing the method `AddAutoMapper`, which scans the assemblies you provide and registers an `IMapper` interface as a service. You use the `IMapper` interface to inject the configuration for all your classes that have the `[AutoMap]` attribute and all the classes that inherit AutoMapper’s `Profile` class. In an ASP.NET Core application, the following code snippet would be added to the Configure method of the `Startup` class:
+
+````c#
+public void ConfigureServices(IServiceCollection services)
+{
+    services.AddControllersWithViews();
+    // … other code removed for clarity
+    
+    services.AddAutoMapper( MyAssemblyToScan1, MyAssemblyToScan2…);
+}
+````
+
+
+
+#### Evaluating how EF Core creates an entity class when reading data in
+
+Sometimes, it’s useful to have a constructor with parameters, because it makes it easier to create an instance or because you want to make sure that the class is created in the correct way.
+
+
+
+````c#
+// An entity class with a constructor that works with EF Core
+public class ReviewGood
+{
+    // You can set your properties to have a private setter. EF Core can still set them.
+    public int Id { get; private set; }
+    public string VoterName { get; private set; }
+    public int NumStars { get; set; }
+
+    public ReviewGood // The constructor doesn’t need parameters for all the properties in the class. Also, the constructor can be any type of accessibility: public, private, and so on.
+        (string voterName) // EF Core will look for a parameter with the same type and a name that matches the property (with matching of Pascal/camel case versions of the name).
+    {
+        VoterName = voterName; // The assignment should not include any changing of the data; otherwise, you won’t get the exact data that was in the database.
+        NumStars = 2; // Any assignment to a property that doesn’t have a parameter is fine. EF Core will set that property after the constructor to the data read back from the database.
+    }
+}
+````
+
+
+
+**CONSTRUCTORS THAT CAN CAUSE YOU PROBLEMS WITH EF CORE**
+
+The first type of constructor that EF Core can’t use is one with a parameter whose type or name doesn’t match. The following listing shows an example with a parameter called `starRating`, which assigns to the property called `NumStars`. If this constructor is the only one, EF Core will throw an exception the first time you use the application’s DbContext.
+
+````c#
+// Class with constructor that EF Core can’t use, causing an exception
+public class ReviewBadCtor
+{
+    public int Id { get; set; }
+    public string VoterName { get; set; }
+    public int NumStars { get; set; }
+    
+    public ReviewBadCtor( // The only constructor in this class
+        string voterName,
+        int starRating) // This parameter’s name doesn’t match the name of any property in this class, so EF Core can’t use it to create an instance of the class when it is reading in data.
+    {
+        VoterName = voterName;
+        NumStars = starRating;
+    }
+}
+````
+
+
+
+If your constructor doesn’t match EF Core’s By Convention pattern, you need to provide a constructor that EF Core can use. The standard solution is to add a private parameterless constructor, which EF Core can use to create the class instance and use its normal parameter/field setting.
+
+
+
+**EF CORE CAN INJECT CERTAIN SERVICES VIA THE ENTITY CONSTRUCTOR**
+
+EF Core can inject three types of services, the most useful of which injects a method to allow lazy loading of relationships. The other two uses are advanced features.
+
+`Microsoft.EntityFrameworkCore.Proxies` NuGet package is the simplest way to configure lazy loading, but it has the drawback that all the navigational properties must be set up to use lazy loading - that is, every navigational property must have the keyword `virtual` added to its property definition.
+
+If you want to limit what relationships use lazy loading, you can obtain a lazy loading service via an entity class’s constructor. Then you change the navigational properties to use this service in the property’s getter method. The following listing shows a `BookLazy` entity class that has two relationships: a `PriceOffer` relationship that doesn’t use lazy loading and a `Reviews` relationship that does.
+
+````c#
+// Showing how lazy loading works via an injected lazy loader method
+public class BookLazy
+{
+    public BookLazy() { } // You need a public constructor so that you can create this book in your code.
+
+    // This private constructor is used by EF Core to inject the LazyLoader.
+    private BookLazy(ILazyLoader lazyLoader)
+    {
+        _lazyLoader = lazyLoader;
+    }
+
+    private readonly ILazyLoader _lazyLoader;
+
+    public int Id { get; set; }
+
+    public PriceOffer Promotion { get; set; } // A normal relational link that isn’t loaded via lazy loading
+
+    private ICollection<LazyReview> _reviews; // The actual reviews are held in a backing field.
+    public ICollection<LazyReview> Reviews // The list that you will access
+    {
+        get => _lazyLoader.Load(this, ref _reviews); // A read of the property will trigger a lazy loading of the data (if not already loaded).
+        set => _reviews = value; // The set simply updates the backing field.
+    }
+}
+````
+
+
+
+Injecting the service via the `ILazyLoader` interface requires the NuGet package `Microsoft.EntityFrameworkCore.Abstractions` to be added to the project. If you are enforcing an architecture that doesn’t allow any external packages in it, you can add a parameter by using the type `Action<object, string>` in the entity’s constructor. EF Core will fill the parameter of type `Action<object, string>` with an action that takes the entity instance as its first parameter and the name of the field as the second parameter. When this action is invoked, it loads the relationship data into the named field in the given entity class instance.
+
+The other two ways of injecting a service into the entity class via a constructor are as follows:
+
+* Injecting the DbContext instance that the entity class is linked to is useful if you want to run database accesses inside your entity class. You shouldn’t use this technique unless you have a serious performance or business logic problem that can’t be solved any other way.
+* The `IEntityType` for this entity class instance gives you access to the configuration, `State`, EF Core information about this entity, and so on associated with this entity type.
+
+
+
+### Writing to the database with EF Core
+
+#### Evaluating how EF Core writes entities/relationships to the database
+
+````c#
+// Adding a new Book entity with a new Review
+var book = new Book //Creates a new Book
+{
+    Title = "Test",
+    Reviews = new List<Review>()
+};
+book.Reviews.Add(new Review { NumStars = 1 }); // Adds a new Review to the Book’s Reviews navigational property
+context.Add(book); // The Add method says that the entity instance should be added to the appropriate row, with any relationships added or updated.
+context.SaveChanges(); // SaveChanges carries out the database update.
+````
+
+
+
+To add these two linked entities to the database, EF Core has to do the following:
+
+* *Work out the order in which it should create these new rows* - In this case, it has to create a row in the Books table so that it has the primary key of the Book.
+* *Copy any primary keys into the foreign key of any relationships* - In this case, it copies the Books row’s primary key, `BookId`, into the foreign key in the new Review row.
+* *Copy back any new data created in the database so that the entity classes properly represent the database* - In this case, it must copy back the `BookId` and update the `BookId` property in both the `Book` and `Review` entity classes and the `ReviewId` for the `Review` entity class.
+
+
+
+````sql
+// The SQL commands to create the two rows, with return of primary keys
+-- first database access
+SET NOCOUNT ON;
+INSERT INTO [Books] ([Description], [Title], ...)
+VALUES (@p0, @p1, @p2, @p3, @p4, @p5, @p6);
+
+SELECT [BookId] FROM [Books]
+WHERE @@ROWCOUNT = 1 AND [BookId] = scope_identity();
+
+-- second database access
+SET NOCOUNT ON;
+INSERT INTO [Review] ([BookId], [Comment], ...)
+VALUES (@p7, @p8, @p9, @p10);
+
+SELECT [ReviewId] FROM [Review]
+WHERE @@ROWCOUNT = 1 AND [ReviewId] = scope_identity();
+````
+
+
+
+You don’t need to do multiple calls to the `SaveChanges` method if you have navigational properties that link the different entities. So if you think that you need to call `SaveChanges` twice, normally you haven’t set up the right navigational properties to handle that case. Calling `SaveChanges` multiple times to create an entity with relationships isn’t recommended because if the second `SaveChanges` fails for some reason, you have an incomplete set of data in your database, which could cause problems.
+
+
+
+#### Evaluating how DbContext handles writing out entities/relationships
+
+````c#
+// Creating a new Book with a new many-to-many link to an existing Author
+//STAGE1
+var author = context.Authors.First();
+var bookAuthor = new BookAuthor { Author = author }; // Creates a new BookAuthor linking row, ready to link to Book to the Author
+var book = new Book // Creates a Book and fills in the AuthorsLink navigational property with a single entry, linking it to the existing Author
+{
+    Title = "Test Book",
+    AuthorsLink = new List<BookAuthor> { bookAuthor }
+};
+
+//STAGE2
+context.Add(book); // Calls the Add method, which tells EF Core that the Book needs to be added to the database
+
+//STAGE3
+context.SaveChanges(); // SaveChanges looks at all the tracked entities and works out how to update the database to achieve what you have asked it to do.
+````
+
+Each of the three figures shows the following data at the end of its stage:
+
+* The State of each entity instance at each stage of the process (shown above each entity class)
+* The primary and foreign keys with the current value in brackets. If a key is (0), it hasn’t been set yet.
+* The navigational links are shown as connections from the navigational property to the appropriate entity class that it is linked to.
+* Changes between each stage, shown by bold text or thicker lines for the navigational links.
+
+
+
+The situation after Stage 1 has finished. This initial code sets up a new `Book` entity class (left) with a new `BookAuthor` entity class (middle) that links the Book to an existing `Author` entity class (right).
+
+
+
+![](./diagrams/svg/06_01_state_stage_1.drawio.svg)
+
+
+
+Here are the things that happen when the `Add` method is called in Stage 2.
+
+
+
+![](./diagrams/svg/06_02_state_stage_2.drawio.svg)
+
+
+
+The `Add` method sets the `State` of the entity provided as a parameter to Added - in this example, the `Book` entity. Then it looks at all entities linked to the entity provided as a parameter, either by navigational properties or by foreign-key values. For each linked entity, it does the following:
+
+* If the entity is not tracked - that is, its current `State` is `Detached` - it sets its `State` to `Added`. In this example, that entity is `BookAuthor`. The `Author`’s `State` isn’t updated because that entity is tracked.
+* It fills in any foreign keys for the correct primary keys. If the linked primary key isn’t yet available, it puts a unique negative number in the `CurrentValue` properties of the tracking data for the primary key and the foreign key.
+* It fills in any navigational properties that aren’t currently set up by running a version of the relational fixup.
+
+
+
+The final stage, Stage 3, is what happens when the `SaveChanges` method is called.
+
+
+
+![](./diagrams/svg/06_03_state_stage_3.drawio.svg)
+
+
+
+Any columns set or changed by the database are copied back into the entity class so that the entity matches the database. In this example, the `Book`’s `BookId` and the `BookAuthor`’s `BookId` were updated to have the key value created in the database. Also, now that all the entities involved in this database write match the database, their `States` are set to `Unchanged`.
+
+When something doesn’t work correctly, or when you want to do something complex, such as logging entity class changes, this information is useful.
+
+
+
+#### A quick way to copy data with relationships
+
+Sometimes, you want to copy an entity class with all its relationships. One solution would be to clone each entity class and its relationships, but that’s hard work.
+
+As an example, you are going to use your knowledge of EF Core to copy a user’s Book App `Order`, which has a collection of `LineItems`, which in turn links to `Books`. You want to copy the `Order` only with the `LineItems`, but you do not want to copy the `Books` that the `LineItems` links to; two copies of a `Book` would cause all sorts of problems.
+
+
+
+````c#
+// Creating an Order with two LineItems ready to be copied
+var books = context.SeedDatabaseFourBooks(); // For this test, add four books to use as test data.
+var order = new Order // Creates an Order with two LineItems to copy
+{
+    CustomerId = Guid.Empty, // Sets CustomerId to the default value so that the query filter reads the order back
+    LineItems = new List<LineItem>
+    {
+        // Adds the first LineNum linked to the first book
+        new LineItem
+        {
+            LineNum = 1, ChosenBook = books[0], NumBooks = 1
+        },
+        // Adds the second LineNum linked to the second book
+        new LineItem
+        {
+            LineNum = 2, ChosenBook = books[1], NumBooks = 2
+        },
+    }
+};
+context.Add(order);
+context.SaveChanges();
+````
+
+To copy that Order properly, you need to know three things:
+
+* If you Add an entity that has linked entities that are not tracked - that is, with a `State` of `Detached` - they will be set to the `State` `Added`.
+* EF Core can find linked entities via the navigational links.
+* If you try to `Add` an entity class to the database, and the primary key is already in the database, you will get a database exception because the primary key must be unique.
+
+When you know those three things, you can get EF Core to copy the `Order` with its `LineItems`, but not the `Books` that the `LineItems` link to. Here is the code that copies the `Order` and its `LineItems` but doesn’t copy the `Book` linked to the `LineItems`.
+
+````c#
+// Copying an Order with its LineItems
+var order = context.Orders // This code is going to query the Orders table.
+    .AsNoTracking() // AsNoTracking means that the entities are read-only; their State will be Detached.
+    .Include(x => x.LineItems) // Include the LineItems, as you want to copy them too.
+    // You do not add .ThenInclude(x => x.ChosenBook) to the query. If you did, the query would copy the Book entities, which is not what you want.
+    .Single(x => x.OrderId == id); // Takes the Order that you want to copy
+
+// Resets the primary keys (Order and LineItem) to their default value, telling the database to generate new primary keys
+order.OrderId = default;
+order.LineItems.First().LineItemId = default;
+order.LineItems.Last().LineItemId = default;
+context.Add(order);
+context.SaveChanges();
+````
+
+Note that you haven’t reset the foreign keys because you are relying on the fact that the navigational properties override any foreign key values.
+
+
+
+#### A quick way to delete an entity
+
+````c#
+// Deleting an entity from the database by setting its primary key
+var book = new Book // Creates the entity class that you want to delete (in this case, a Book)
+{
+    BookId = bookId // Sets the primary key of the entity instance
+};
+context.Remove(book); // The call to Remove tells EF Core that you want this entity/row to be deleted.
+context.SaveChanges();
+````
+
+In a disconnected situation, such as some form of web application, the command to delete returns only the type and primary key value(s), making the delete code simpler and quicker. Some minor things are different from the read/remove approach to relationships:
+
+* If there is no row for the primary key you gave, EF Core throws a `DbUpdateConcurrencyException`, saying that nothing was deleted.
+* The database is in command of which other linked entities are deleted; EF Core has no say in that.
+
+
+
+### Summary
+
+* When reading in entity classes as tracked entities, EF Core uses a process called relational fixup that sets up all the navigational properties to any other tracked entities.
+* The normal tracking query uses identity resolution, producing the best representation of the database structure with one entity class instance for each unique primary key.
+* The `AsNoTracking` query is quicker than a normal tracking query because it doesn’t use identity resolution, but it can create duplicate entity classes with the same data.
+* If your query loads multiple collections of relationships by using the Include method, it creates one big database query, which can be slow in some circumstances.
+* If your query is missing an `Include` method, you will get the wrong result, but there is a way to set up your navigational collections so that your code will fail instead of returning incorrect data.
+* Using Global Query Filters to implement a soft-delete feature works well, but watch how you handle relationships that rely on the soft-deleted entity.
+* Select queries are efficient from the database side but can take more lines of code to write. The AutoMapper library can automate the building of Select queries.
+* EF Core creates an entity class when reading in data. It does this via the default parameterless constructor or any other constructors you write if you follow the normal pattern.
+* When EF Core creates an entity in the database, it reads back any data generated by the database, such as a primary key provided by the database, so that it can update the entity class instance to match the database.
+
+
+
+
+
+## 7. Configuring nonrelational properties
