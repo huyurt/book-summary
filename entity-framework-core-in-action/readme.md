@@ -4194,3 +4194,574 @@ When you’re using the SQL Server provider, EF adds an `IS NOT NULL` filter for
 
 ### Configuring the naming on the database side
 
+#### Configuring table names
+
+By convention, the name of a table is set by the name of the `DbSet<T>` property in the application’s DbContext, or if no `DbSet<T>` property is defined, the table uses the class name. In the application’s DbContext of our Book App, for example, you defined a `DbSet<Book>` Books property, so the database table name is set to Books. Conversely, you haven’t defined a `DbSet<T>` property for the `Review` entity class in the application’s DbContext, so its table name used the class name and is, therefore, Review.
+
+If your database has specific table names that don’t fit the By Convention naming rules - for example, if the table name can’t be converted to a valid .NET variable name because it has a space in it - you can use either Data Annotations or the Fluent API to set the table name specifically.
+
+
+
+Data Annotations
+
+````c#
+[Table("XXX")]
+public class Book … etc.
+````
+
+Fluent API
+
+````c#
+modelBuilder.Entity<Book>()
+    .ToTable("XXX");
+````
+
+
+
+#### Configuring the schema name and schema groupings
+
+Some databases, such as SQL Server, allow you to group your tables by using what is called a schema name. You could have two tables with the same name but different schema names: a table called Books with a schema name Display, for example, would be different from a table called Books with a schema name Order.
+
+By convention, the schema name is set by the database provider because some databases, such as SQLite and MySQL, don’t support schemas. In the case of SQL Server, which does support schemas, the default schema name is *dbo*, which is the SQL Server default name. You can change the default schema name only via the Fluent API, using the following snippet in the `OnModelCreating` method of your application’s DbContext:
+
+````c#
+modelBuilder.HasDefaultSchema("NewSchemaName");
+````
+
+
+
+You use this approach if your database is split into logical groups such as sales, production, accounts, and so on, and a table needs to be specifically assigned to a schema.
+
+Data Annotations
+
+````c#
+[Table("SpecialOrder", Schema = "sales")]
+class MyClass … etc.
+````
+
+Fluent API
+
+````c#
+modelBuilder.Entity<MyClass>()
+    .ToTable("SpecialOrder", schema: "sales");
+````
+
+
+
+#### Configuring the database column names in a table
+
+By convention, the column in a table has the same name as the property name. If your database has a name that can’t be represented as a valid .NET variable name or doesn’t fit the software use, you can set the column names by using Data Annotations or the Fluent API.
+
+Data Annotations
+
+````c#
+[Column("SpecialCol")]
+public int BookId { get; set; }
+````
+
+Fluent API
+
+````c#
+modelBuilder.Entity<MyClass>()
+    .Property(b => b.BookId)
+    .HasColumnName("SpecialCol");
+````
+
+
+
+### Configuring Global Query Filters
+
+Many applications, such as ASP.NET Core, have security features that control what views and controls the user can access. EF Core has a similar security feature called *Global Query Filters* (shortened to *Query Filters*). You can use Query Filters to build a multitenant application. This type of application holds data for different users in one database, but each user can see only the data they are allowed to access. Another use is to implement a soft-delete feature; instead of deleting data in the database, you might use a Query Filter to make the soft-deleted row disappear, but the data will still be there if you need to undelete it later.
+
+
+
+### Applying Fluent API commands based on the database provider type
+
+The EF Core database providers provide a way to detect what database provider is being used when an instance of an application DbContext is created. This approach is useful for situations such as using, say, an SQLite database for your unit tests, but the production database is on an SQL Server, and you want to change some things to make your unit tests work.
+
+SQLite, for example, doesn’t fully support a few NET types, such as decimal, so if you try to sort on a decimal property in an SQLite database, you’ll get an exception saying that you won’t get the right result from an SQLite database. One way to get around this issue is to convert the decimal type to a double type when using SQLite; it won’t be accurate, but it might be OK for a controlled set of unit tests.
+
+Each database provider provides an extension method to return `true` if the database matches that provider. The SQL Server database provider, for example, has a method called `IsSqlServer();` the SQLite database provider has a method called `IsSqlite();` and so on. Another approach is to use the `ActiveProvider` property in the `ModelBuilder` class, which returns a string that is the NuGet package name of the database provider, such as "`Microsoft.EntityFrameworkCore.SqlServer`".
+
+
+
+````c#
+// Using database-provider commands to set a column name
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    //… put your normal configration here
+    if (Database.IsSqlite()) // The IsSqlite will return true if the database provided in the options is SQLite.
+    {
+        // You set the two decimal values to double so that a unit test that sorts on these values doesn’t throw an exception.
+        modelBuilder.Entity<Book>()
+            .Property(e => e.Price)
+            .HasConversion<double>();
+        modelBuilder.Entity<PriceOffer>()
+            .Property(e => e.NewPrice)
+            .HasConversion<double>();
+    }
+}
+````
+
+
+
+### Shadow properties: Hiding column data inside EF Core
+
+*Shadow properties* allow you to access database columns without having them appear in the entity class as a property. Shadow properties allow you to "hide" data that you consider not to be part of the normal use of the entity class. This is all about good software practice: you let upper layers access only the data they need, and you hide anything that those layers don’t need to know about. Let me give you two examples that show when you might use shadow properties:
+
+* A common need is to track by whom and when data was changed, maybe for auditing purposes or to understand customer behavior. The tracking data you receive is separate from the primary use of the class, so you may decide to implement that data by using shadow properties, which can be picked up outside the entity class.
+* When you’re setting up relationships in which you don’t define the foreign-key properties in your entity class, EF Core must add those properties to make the relationship work, and it does this via shadow properties.
+
+
+
+#### Configuring shadow properties
+
+There’s a By Convention approach to configuring shadow properties, but because it relates only to relationships. The other method is to use the Fluent API. You can introduce a new property by using the Fluent API method `Property<T>`. Because you’re setting up a shadow property, there won’t be a property of that name in the entity class, so you need to use the Fluent API’s `Property<T>` method, which takes a .NET Type and the name of the shadow property. The following listing shows the setup of a shadow property called `UpdatedOn` that’s of type `DateTime`.
+
+````c#
+// Creating the UpdatedOn shadow property by using the Fluent API
+public class Chapter06DbContext : DbContext
+{
+    …
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<MyEntityClass>()
+            .Property<DateTime>("UpdatedOn"); // Uses the Property<T> method to define the shadow property type
+        …
+    }
+}
+````
+
+
+
+Under By Convention, the name of the table column the shadow property is mapped to is the same as the name of the shadow property. You can override this setting by adding the `HasColumnName` method on to the end of the `property` method.
+
+If a property of that name already exists in the entity class, the configuration will use that property instead of creating a shadow property.
+
+
+
+#### Accessing shadow properties
+
+Because the shadow properties don’t map to a class property, you need to access them directly via EF Core. For this purpose, you have to use the EF Core command `Entry(myEntity).Property("MyPropertyName").CurrentValue`, which is a read/write property.
+
+````c#
+// Using Entry(inst).Property(name) to set the shadow property
+var entity = new SomeEntityClass(); // Creates an entity class ...
+context.Add(entity); // ... and adds it to the context, so it’s now tracked
+context.Entry(entity) // Gets the EntityEntry from the tracked entity data
+    .Property("UpdatedOn").CurrentValue // Uses the Property method to get the shadow property with read/write access
+    	= DateTime.Now; // Sets that property to the value you want
+context.SaveChanges(); // Calls SaveChanges to save the MyEntityClass instance, with its normal and shadow property values, to the database
+````
+
+
+
+If you want to read a shadow property in an entity that has been loaded, use the `context.Entry(entityInstance).Property("PropertyName").CurrentValue` command. But you must read the entity as a tracked entity; you should read the entity without the `AsNoTracking` method being used in the query. The `Entry(<entityInstance>).Property` method uses the tracked entity data inside EF Core to hold the value, as it’s not held in the entity class instance.
+
+In LINQ queries, you use another technique to access a shadow property: the `EF.Property` command. You could sort by the `UpdatedOn` shadow property, for example, by using the following query snippet, with the `EF.Property` method in bold:
+
+````c#
+context.MyEntities
+    .OrderBy(b => EF.Property<DateTime>(b, "UpdatedOn"))
+    .ToList();
+````
+
+
+
+### Backing fields: Controlling access to data in an entity class
+
+Columns in a database table are normally mapped to an entity class property with normal getters and setters - `public int MyProp { get ; set; }`. But you can also map a private field to your database. This feature is called a *backing field*, and it gives you more control of the way that database data is read or set by the software.
+
+Like shadow properties, backing fields hide data, but they do the hiding in another way. For shadow properties, the data is hidden inside EF Core’s data, but backing fields hide the data inside the entity class, so it’s easier for the entity class to access the backing field inside the class. Here are some examples of situations in which you might use backing fields:
+
+* *Hiding sensitive data* - Hiding a person’s date of birth in a private field and making their age in years available to the rest of the software.
+* *Catching changes* - Detecting an update of a property by storing the data in a private field and adding code in the setter to detect the update of a property.
+* *Creating Domain-Driven Design (DDD) entity classes* - Creating DDD entity classes in which all the entity classes’ properties need to be read-only. Backing fields allow you to lock down navigational collection properties.
+
+
+
+#### Creating a simple backing field accessed by a read/write property
+
+The following code snippet shows you a string property called `MyProperty`, in which the string data is stored in a private field. This form of backing field doesn’t do anything particularly different from using a normal property, but this example shows the concept of a property linked to a private field:
+
+````c#
+public class MyClass
+{
+    private string _myProperty;
+    public string MyProperty
+    {
+        get { return _myProperty; }
+        set { _myProperty = value; }
+    }
+}
+````
+
+EF Core’s By Convention configuration will find the type of backing field and configure it as a backing field, and by default, EF Core will read/write the database data to this private field.
+
+
+
+#### Creating a read-only column
+
+Creating a read-only column is the most obvious use, although it can also be implemented via a private setting property. If you have a column in the database that you need to read but don’t want the software to write, a backing field is a great solution. In this case, you can create a private field and use a public property, with a getter only, to retrieve the value.
+
+
+
+````c#
+public class MyClass
+{
+    private string _readOnlyCol;
+    public string ReadOnlyCol => _readOnlyCol;
+}
+````
+
+
+
+Something must set the column property, such as setting a default value in the database column or through some sort of internal database method.
+
+
+
+#### Concealing a person’s date of birth: Hiding data inside a class
+
+Hiding a person’s date of birth is a possible use of backing fields. In this case, you deem for security reasons that a person’s date of birth can be set, but only their age can be read from the entity class. The following listing shows how to do this in the `Person` class by using a private `_dateOfBirth` field and then providing a method to set it and a property to calculate the person’s age.
+
+````c#
+// Using a backing field to hide sensitive data from normal access
+public class Person
+{
+    private DateTime _dateOfBirth; // The private backing field, which can’t be accessed directly via normal .NET software
+
+    public void SetDateOfBirth(DateTime dateOfBirth) // Allows the backing field to be set
+    {
+        _dateOfBirth = dateOfBirth;
+    }
+
+    public int AgeYears => Years(_dateOfBirth, DateTime.Today); // You can access the person’s age but not their exact date of birth.
+
+    private static int Years(DateTime start, DateTime end)
+    {
+        return (end.Year - start.Year - 1) +
+            (((end.Month > start.Month) ||
+              ((end.Month == start.Month)
+               && (end.Day >= start.Day)))
+             ? 1 : 0);
+    }
+}
+````
+
+
+
+From the class point of view, the `_dateOfBirth` field is hidden, but you can still access the table column via various EF Core commands in the same way that you accessed the shadow properties: by using the `EF.Property<DateTime>(entity, "_dateOfBirth")` method.
+
+The backing field, `_dateOfBirth`, isn’t totally secure from the developer, but that’s not the aim. The idea is to remove the date-of-birth data from the normal properties so that it doesn’t get displayed unintentionally in any user-visible view.
+
+
+
+#### Configuring backing fields
+
+Having seen backing fields in action, you can configure them By Convention, via Fluent API, and now in EF Core 5 via Data Annotations. The By Convention approach works well but relies on the class to have a property that matches a field by type and a naming convention. If a field doesn’t match the property name/type or doesn’t have a matching property, you need to configure your backing fields with Data Annotations or by using the Fluent API.
+
+
+
+**CONFIGURING BACKING FIELDS BY CONVENTION**
+
+If your backing field is linked to a valid property, the field can be configured by convention. The rules for By Convention configuration state that the private field must have one of the following names that match a property in the same class:
+
+* `_<property name>` (for example, `_MyProperty`)
+* `_<camel-cased property name >` (for example, `_myProperty`)
+* `m_<property name>` (for example, `m_MyProperty`)
+* `m_<camel-cased property name>` (for example, `m_myProperty`)
+
+
+
+**CONFIGURING BACKING FIELDS VIA DATA ANNOTATIONS**
+
+New in EF Core 5 is the `BackingField` attribute, which allows you to link a property to a private field in the entity class. This attribute is useful if you aren’t using the By Convention backing field naming style, as in this example:
+
+````c#
+private string _fieldName;
+[BackingField(nameof(_fieldName))]
+public string PropertyName
+{
+    get { return _fieldName; }
+}
+
+public void SetPropertyNameValue(string someString)
+{
+    _fieldName = someString;
+}
+````
+
+
+
+**CONFIGURING BACKING FIELDS VIA THE FLUENT API**
+
+You have several ways of configuring backing fields via the Fluent API. We’ll start with the simplest and work up to the more complex. Each example shows you the `OnModelCreating` method inside the application’s DbContext, with only the field part being configured:
+
+* *Setting the name of the backing field* - If your backing field name doesn’t follow EF Core’s conventions, you need to specify the field name via the Fluent API. Here’s an example:
+
+````c#
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<Person>()
+        .Property(b => b.MyProperty)
+        .HasField("_differentName");
+    …
+}
+````
+
+* *Supplying only the field name* - In this case, if there’s a property with the correct name, by convention EF Core will refer to the property, and the property name will be used for the database column. Here’s an example:
+
+````c#
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<Person>()
+        .Property("_dateOfBirth")
+        .HasColumnName("DateOfBirth");
+    …
+}
+````
+
+If no property getter or setter is found, the field will still be mapped to the column, using its name, which in this example is `_dateOfBirth`, but that’s most likely not the name you want for the column. So you add the `HasColumnName` Fluent API method to get a better column name. The downside is that you’d still need to refer to the data in a query by its field name (in this case, `_dateOfBirth`), which isn’t too friendly or obvious.
+
+
+
+**ADVANCED: CONFIGURING HOW DATA IS READ/WRITTEN TO THE BACKING FIELD**
+
+The default database access mode for backing fields is for EF Core to read and write to the field. This mode works in nearly all cases, but if you want to change the database access mode, you can do so via the Fluent API `UsePropertyAccessMode` method. The following code snippet tells EF Core to try to use the property for read/write, but if the property is missing a setter, EF Core will fill in the field on a database read:
+
+````c#
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<Person>()
+        .Property(b => b.MyProperty)
+        .HasField("_differentName")
+        .UsePropertyAccessMode(PropertyAccessMode.PreferProperty);
+    …
+}
+````
+
+
+
+### Recommendations for using EF Core’s configuration
+
+Here are suggested approaches to use for each part of EF Core configuration:
+
+* Start by using the By Convention approach wherever possible, because it’s quick and easy.
+* Use the validation attributes - `MaxLength`, `Required`, and so on - from the Data Annotations approach, as they’re useful for validation.
+* For everything else, use the Fluent API approach, because it has the most comprehensive set of commands. But consider writing code to automate common settings, such as applying the `DateTime` "UTC fix" to all `DateTime` properties whose `Name` ends with "`Utc`".
+
+
+
+#### Use By Convention configuration first
+
+Always start with that approach. The By Convention approach is quick and easy. You’ll see in chapter 8 that most relationships can be set up purely by using the By Convention naming rules, which can save you a lot of time. Learning what By Convention can configure will dramatically reduce the amount of configuration code you need to write.
+
+
+
+#### Use validation Data Annotations wherever possible
+
+Although you can do things such as limit the size of a string property with either Data Annotations or the Fluent API, recommend using Data Annotations for the following reasons:
+
+* *Frontend validation can use them.* Although EF Core doesn’t validate the entity class before saving it to the database, other parts of the system may use Data Annotations for validation. ASP.NET Core uses Data Annotations to validate input, for example, so if you input directly into an entity class, the validation attributes will be useful. Or if you use separate ASP.NET ViewModel or DTO classes, you can cut and paste the properties with their validation attributes.
+* *You may want to add validation to EF Core’s `SaveChanges`.* Using data validation to move checks out of your business logic can make your business logic simpler.
+* *Data Annotations make great comments.* Attributes, which include Data Annotations, are compile-time constants; they’re easy to see and easy to understand.
+
+
+
+#### Use the Fluent API for anything else
+
+The Fluent API practice is more a preference than a rule, though, so make your own decision.
+
+
+
+#### Automate adding Fluent API commands by class/property signatures
+
+One useful feature of the Fluent API commands allows you to write code to find and configure certain configurations based on the class/property type, name, and so on.
+
+Automating finding/adding configurations relies on a type called `IMutableModel`, which you can access in the `OnModelCreating` method. This type gives you access to all the classes mapped by EF Core to the database, and each `IMutableEntityType` allows you to access the properties. Most configuration options can be applied via methods in these two interfaces, but a few, such as Query Filters, need a bit more work. To start, you will build the code that will iterate through each entity class and its properties, and add one configuration. This iteration approach defines the way to automate configurations, and in later examples, you will add extra commands to do more configurations.
+
+The following example adds a value converter to a `DateTime` that applies the UTC fix. But in the following listing, the UTC fix value converter is applied to every property that is a `DateTime` with a `Name` that ends with "`Utc`".
+
+````c#
+// Applying value converter to any DateTime property ending in "Utc"
+protected override void OnModelCreating(ModelBuilder modelBuilder) // The Fluent API commands are applied in the OnModelCreating method.
+{
+    var utcConverter = new ValueConverter<DateTime, DateTime>(
+        toDb => toDb,
+        fromDb => DateTime.SpecifyKind(fromDb, DateTimeKind.Utc)); // Defines a value converter to set the UTC setting to the returned DateTime
+
+    foreach (var entityType in modelBuilder.Model.GetEntityTypes()) // Loops through all the classes that EF Core has currently found mapped to the database
+    {
+        foreach (var entityProperty in entityType.GetProperties()) // Loops through all the properties in an entity class that are mapped to the database
+        {
+            // Adds the UTC value converter to properties of type DateTime and Name ending in "Utc"
+            if (entityProperty.ClrType == typeof(DateTime)
+                && entityProperty.Name.EndsWith("Utc"))
+            {
+                entityProperty.SetValueConverter(utcConverter);
+            }
+            //… other examples left out for clarity
+        }
+    }
+    //… rest of configration code left out
+}
+````
+
+
+
+Above code showed the setup of only one `Type/Named` property, but normally, you would have lots of Fluent API settings. In this example, you are going to do the following:
+
+1. Add the UTC fix value converter to properties of type `DateTime` whose `Name`s end with "`Utc`".
+2. Set the decimal precision/scale where the property’s Name contains "`Price`".
+3. Set any string properties whose `Name` ends in "`Url`" to be stored as ASCII - that is, `varchar(nnn)`.
+
+The following code snippet shows the code inside the `OnModelCreating` method in the Book App DbContext to add these three configuration settings:
+
+````c#
+foreach (var entityType in modelBuilder.Model.GetEntityTypes())
+{
+    foreach (var entityProperty in entityType.GetProperties())
+    {
+        if (entityProperty.ClrType == typeof(DateTime)
+            && entityProperty.Name.EndsWith("Utc"))
+        {
+            entityProperty.SetValueConverter(utcConverter);
+        }
+
+        if (entityProperty.ClrType == typeof(decimal)
+            && entityProperty.Name.Contains("Price"))
+        {
+            entityProperty.SetPrecision(9);
+            entityProperty.SetScale(2);
+        }
+
+        if (entityProperty.ClrType == typeof(string)
+            && entityProperty.Name.EndsWith("Url"))
+        {
+            entityProperty.SetIsUnicode(false);
+        }
+    }
+}
+````
+
+
+
+A few Fluent APIs configurations need class-specific code, however. The Query Filters, for example, need a query that accesses entity classes. For this case, you need to add an interface to the entity class you want to add a Query Filter to and create the correct filter query dynamically.
+
+The following listing shows the extension class, called `SoftDeleteQueryExtensions`, with its `MyQueryFilterTypes` `enum`.
+
+````c#
+// The enum/class to use to set up Query Filters on every compatible class
+public enum MyQueryFilterTypes { SoftDelete, UserId } // Defines the different type of LINQ query to put in the Query Filter
+
+public static class SoftDeleteQueryExtensions
+{
+    public static void AddSoftDeleteQueryFilter( // Call this method to set up the query filter.
+        this IMutableEntityType entityData, // First parameter comes from EF Core and allows you to add a query filter
+        MyQueryFilterTypes queryFilterType, // Second parameter allows you to pick which type of query filter to add
+        IUserId userIdProvider = null) // Third optional property holds a copy of the current DbContext instance so that the UserId will be the current one
+    {
+        // Creates the correctly typed method to create the Where LINQ expression to use in the Query Filter
+        var methodName = $"Get{queryFilterType}Filter";
+        var methodToCall = typeof(SoftDeleteQueryExtensions)
+            .GetMethod(methodName,
+                       BindingFlags.NonPublic | BindingFlags.Static)
+            .MakeGenericMethod(entityData.ClrType);
+        var filter = methodToCall
+            .Invoke(null, new object[] { userIdProvider });
+        entityData.SetQueryFilter((LambdaExpression)filter); // Uses the filter returned by the created type method in the SetQueryFilter method
+        if (queryFilterType == MyQueryFilterTypes.SoftDelete) // Adds an index on the SoftDeleted property for better performance
+            entityData.AddIndex(entityData.FindProperty(
+                nameof(ISoftDelete.SoftDeleted)));
+        if (queryFilterType == MyQueryFilterTypes.UserId) // Adds an index on the UserId property for better performance
+            entityData.AddIndex(entityData.FindProperty(
+                nameof(IUserId.UserId)));
+    }
+
+    // Creates a query that is true only if the _userId matches the UserID in the entity class
+    private static LambdaExpression GetUserIdFilter<TEntity>(IUserId userIdProvider) where TEntity : class, IUserId
+    {
+        Expression<Func<TEntity, bool>> filter =
+            x => x.UserId == userIdProvider.UserId;
+        return filter;
+    }
+
+    // Creates a query that is true only if the SoftDeleted property is false
+    private static LambdaExpression GetSoftDeleteFilter<TEntity>(IUserId userIdProvider) where TEntity : class, ISoftDelete
+    {
+        Expression<Func<TEntity, bool>> filter =
+            x => !x.SoftDeleted;
+        return filter;
+    }
+}
+````
+
+Because every query of an entity that has a Query Filter will contain a filter on that property, the code automatically adds an index on every property that is used in a Query Filter. That technique improves performance on that entity.
+
+````c#
+// Adding code to the DbContext to automate setting up Query Filters
+public class EfCoreContext : DbContext, IUserId // Adding the IUserId to the DbContext means that we can pass the DbContext to the UserId query filter.
+{
+    public Guid UserId { get; private set; } // Holds the UserId, which is used in the Query Filter that uses the IUserId interface
+
+    // Sets up the UserId. If the userIdService is null, or if it returns null for the UserId, we set a replacement UserId.
+    public EfCoreContext(DbContextOptions<EfCoreContext> options, IUserIdService userIdService = null) : base(options)
+    {
+        UserId = userIdService?.GetUserId()
+            ?? new ReplacementUserIdService().GetUserId();
+    }
+
+    //DbSets removed for clarity
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder) // The automate code goes in the OnModelCreating method.
+    {
+        //other configration code removed for clarity
+
+        foreach (var entityType in modelBuilder.Model.GetEntityTypes()) // Loops through all the classes that EF Core has currently found mapped to the database
+        {
+            //other property code removed for clarity
+
+            if (typeof(ISoftDelete).IsAssignableFrom(entityType.ClrType)) // If the class inherits the ISoftDelete interface, it needs the SoftDelete Query Filter.
+            {
+                entityType.AddSoftDeleteQueryFilter(MyQueryFilterTypes.SoftDelete); // Adds a Query Filter to this class, with a query suitable for SoftDelete
+            }
+                     
+            if (typeof(IUserId).IsAssignableFrom(entityType.ClrType)) // If the class inherits the IUserId interface, it needs the IUserId Query Filter.
+            {
+                entityType.AddSoftDeleteQueryFilter(MyQueryFilterTypes.UserId, this); // Adds the UserId Query Filter to this class. Passing ‘this’ allows access to the current UserId.
+            }
+        }
+    }
+}
+````
+
+Here are some recommendations and limitations that you should know about if you are going to use this approach:
+
+* If you run the automatic Fluent API code before your handcoded configurations, your handcoded configurations will override any of the automatic Fluent API settings. But be aware that if there is an entity class that is registered only via manually written Fluent API, that entity class won’t be seen by the automatic Fluent API code.
+* The configuration commands must apply the same configurations every time because the EF Core configures the application’s DbContext only once - on first use - and then works from a cache version.
+
+
+
+### Summary
+
+* The first time you create the application’s DbContext, EF Core configures itself by using a combination of three approaches: By Convention, Data Annotations, and the Fluent API.
+* Value converters allow you to transform the software type/value when writing and reading back from the database.
+* Two EF Core features, shadow properties and backing fields, allow you to hide data from higher levels of your code and/or control access to data in an entity class. Use the By Convention approach to set up as much as you can, because it’s simple and quick to code.
+* When the By Convention approach doesn’t fit your needs, Data Annotations and/or EF Core’s Fluent API can provide extra commands to configure both the way EF Core maps the entity classes to the database and the way EF Core will handle that data.
+* In addition to writing configuration code manually, you can also add code to configure entity classes and/or properties automatically based on the class/ properties signature.
+
+
+
+
+
+## 8. Configuring relationships
+
+* Configuring relationships with By Convention
+* Configuring relationships with Data Annotations
+* Configuring relationships with the Fluent API
+* Mapping entities to database tables in five other ways
+
+
+
+### Defining some relationship terms
