@@ -3627,3 +3627,570 @@ In a disconnected situation, such as some form of web application, the command t
 
 
 ## 7. Configuring nonrelational properties
+
+### Three ways of configuring EF Core
+
+
+
+![](./diagrams/images/07_01_init_dbcontext.png)
+
+
+
+This list summarizes the three approaches to configuring EF Core:
+
+* *By Convention* - When you follow simple rules on property types and names, EF Core will autoconfigure many of the software and database features. The By Convention approach is quick and easy, but it can’t handle every eventuality.
+* *Data Annotations* - A range of .NET attributes known as *Data Annotations* can be added to entity classes and/or properties to provide extra configuration information.
+* *Fluent API* - EF Core has a method called `OnModelCreating` that’s run when the EF context is first used. You can override this method and add commands, known as the *Fluent API*, to provide extra information to EF Core in its modeling stage. The Fluent API is the most comprehensive form of configuration information, and some features are available only via that API.
+
+
+
+### A worked example of configuring EF Core
+
+For anything beyond a Hello World version of using EF Core, you’re likely to need some form of Data Annotations or Fluent API configuration.
+
+
+
+![](./diagrams/images/07_02_configuring_ef_core.png)
+
+
+
+Here are a few EF Core configurations:
+
+* `[Required]` *attribute* - This attribute tells EF Core that the `Title` column can’t be SQL NULL, which means that the database will return an error if you try to insert/update a book with a `null` `Title` property.
+* `[MaxLength(256)]` *attribute* - This attribute tells EF Core that the number of characters stored in the database should 256 rather than defaulting to the database’s maximum size (2 GB in SQL Server). Having fixed-length strings of the right type, 2-byte Unicode or 1-byte ASCII, makes the database access slightly more efficient and allows an SQL index to be applied to these fixed-size columns.
+* `HasColumnType("date")` *Fluent API* - By making the `PublishedOn` column hold only the date (which is all you need) rather than the default `datetime2`, you reduce the column size from 8 bytes to 3 bytes, which makes searching and sorting on the `PublishedOn` column faster.
+* `IsUnicode(false)` *Fluent API* - The `ImageUrl` property contains only 8-bit ASCII characters, so you tell EF Core so, which means that the string will be stored that way. So if the `ImageUrl` property has a `[MaxLength(512)]` attribute, the `IsUnicode(false)method` would reduce the size of the `ImageUrl` column from 1024 bytes (Unicode takes 2 bytes per character) to 512 bytes (ASCII takes 1 byte per character).
+
+
+
+````c#
+// The Book entity class with added Data Annotations
+public class Book
+{
+    public int BookId { get; set; }
+
+    [Required]
+    [MaxLength(256)]
+    public string Title { get; set; }
+    public string Description { get; set; }
+    public DateTime PublishedOn { get; set; }
+    [MaxLength(64)]
+    public string Publisher { get; set; }
+    public decimal Price { get; set; }
+
+    [MaxLength(512)]
+    public string ImageUrl { get; set; }
+    public bool SoftDeleted { get; set; }
+
+    //-----------------------------------------------
+    //relationships
+    
+    public PriceOffer Promotion { get; set; }
+    public IList<Review> Reviews { get; set; }
+    public IList<BookAuthor> AuthorsLink { get; set; }
+}
+````
+
+
+
+### Configuring by convention
+
+*By Convention* is the default configuration, which can be overridden by the other two approaches, Data Annotations and the Fluent API. The By Convention approach relies on the developer to use the By Convention naming standards and type mappings, which allow EF Core to find and configure entity classes and their relationships, as well as define much of the database model.
+
+
+
+#### Conventions for entity classes
+
+Classes that EF Core maps to the database are called *entity classes*. Entity classes are normal .NET classes, sometimes referred to as POCOs (plain old CLR objects). EF Core requires entity classes to have the following features:
+
+* The class must be of public access: the keyword `public` should be before the class.
+* The class can’t be a `static` class, as EF Core must be able to create a new instance of the class.
+* The class must have a constructor that EF Core can use. The default, parameterless constructor works, and other constructors with parameters can work.
+
+
+
+#### Conventions for parameters in an entity class
+
+By convention, EF Core will look for `public` properties in an entity class that have a `public` getter and a setter of any access mode (`public`, `internal`, `protected`, or `private`). The typical, all-public property is
+
+
+
+````c#
+public int MyProp { get; set; }
+````
+
+
+
+Although the all-public property is the norm, in some places having a property with a more localized access setting (such as `public int MyProp { get; private set; }`) gives you more control of how it’s set. One example would be a method in the entity class that also does some checks before setting the property.
+
+EF Core can handle read-only properties - properties with only a getter, such as `public int MyProp { get; }`. But in that case, the By Convention approach won’t work; you need to use Fluent API to tell EF Core that those properties are mapped to the database.
+
+
+
+#### Conventions for name, type, and size
+
+Here are the rules for the name, type, and size of a relational column:
+
+* The name of the property is used as the name of the column in the table.
+* The .NET type is translated by the database provider to the corresponding SQL type. Many basic .NET types have a one-to-one mapping to a corresponding database type. These basic .NET types are mostly .NET *primitive* types (`int`, `bool`, and so on), with some special cases (such as `string`, `DateTime`, and `Guid`).
+* The size is defined by the .NET type; for instance, the 32-bit `int` type is stored in the corresponding SQL’s 32-bit INT type. `String` and `byte[]` types take on a size of max, which will be different for each database type.
+
+
+
+#### By convention, the nullability of a property is based on .NET type
+
+In relational databases, `NULL` represents missing or unknown data. Whether a column can be `NULL` is defined by the .NET type:
+
+* If the type is `string`, the column can be `NULL`, because a string can be null.
+* Primitive types (such as `int`) or struct types (such as `DateTime`) are non-null by default.
+* Primitive or struct types can be made nullable by using either the `?` suffix (such as `int?`) or the generic `Nullable<T>` (such as `Nullable<int>`). In these cases, the column can be `NULL`.
+
+
+
+![](./diagrams/images/07_03_by_convention_nullability.png)
+
+
+
+#### An EF Core naming convention identifies primary keys
+
+The other rule is about defining the database table’s primary key. The EF Core conventions for designating a primary key are as follows:
+
+* EF Core expects one primary-key property. (The By Convention approach doesn’t handle keys made up of multiple properties/columns, called *composite keys*.)
+* The property is called `Id` or `<class name>id` (such as `BookId`).
+* The type of the property defines what assigns a unique value to the key.
+
+
+
+![](./diagrams/images/07_04_by_convention_primary_key.png)
+
+
+
+Although you have the option of using the short name, `Id`, for a primary key, recommend that you use the longer name: `<class name>` followed by `Id` (`BookId`, for example).
+
+
+
+### Configuring via Data Annotations
+
+*Data Annotations* are a specific type of .NET attribute used for validation and database features. These attributes can be applied to an entity class or property and provide configuration information to EF Core. The Data Annotation attributes that are relevant to EF Core configuration come from two namespaces.
+
+
+
+#### Using annotations from System.ComponentModel.DataAnnotations
+
+The attributes in the `System.ComponentModel.DataAnnotations` namespace are used mainly for data validation at the frontend, such as ASP.NET, but EF Core uses some of them for creating the mapping model. Attributes such as `[Required]` and `[MaxLength]` are the main ones, with many of the other Data Annotations having no effect on EF Core.
+
+
+
+![](./diagrams/images/07_05_data_annotations.png)
+
+
+
+#### Using annotations from System.ComponentModel.DataAnnotations.Schema
+
+The attributes in the `System.ComponentModel.DataAnnotations.Schema` namespace are more specific to database configuration. This namespace was added in NET Framework 4.5, well before EF Core was written, but EF Core uses its attributes, such as `[Table]`, `[Column]`, and so on, to set the table name and column name/type, as described.
+
+
+
+### Configuring via the Fluent API
+
+The third approach to configuring EF Core, called the *Fluent API*, is a set of methods that works on the `ModelBuilder` class that’s available in the `OnModelCreating` method inside your application’s DbContext. The Fluent API works by extension methods that can be chained together, as LINQ commands are chained together, to set a configuration setting. The Fluent API provides the most comprehensive list of configuration commands, with many configurations available only via that API.
+
+As your application grows, putting all Fluent API commands in the `OnModelCreating` method makes finding a specific Fluent API hard work. The solution is to move the Fluent API for an entity class into a separate configuration class that’s then called from the `OnModelCreating` method.
+
+EF Core provides a method to facilitate this process in the shape of the `IEntityTypeConfiguration<T>` interface. Your new application DbContext, `EfCoreContext`, where you move the Fluent API setup of the various classes into separate configuration classes. The benefit of this approach is that the Fluent API for an entity class is all in one place, not mixed with Fluent API commands for other entity classes.
+
+
+
+````c#
+// Application’s DbContext for database with relationships
+public class EfCoreContext : DbContext // UserId of the user who has bought some books
+{
+    public EfCoreContext(DbContextOptions<EfCoreContext> options)
+        : base(options) // Creates the DbContext, using the options set up when you registered the DbContext
+    { }
+
+    // The entity classes that your code will access
+    public DbSet<Book> Books { get; set; }
+    public DbSet<Author> Authors { get; set; }
+    public DbSet<PriceOffer> PriceOffers { get; set; }
+    public DbSet<Order> Orders { get; set; }
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder) // The method in which your Fluent API commands run
+    {
+        // Run each of the separate configurations for each entity class that needs configuration.
+        modelBuilder.ApplyConfiguration(new BookConfig());
+        modelBuilder.ApplyConfiguration(new BookAuthorConfig());
+        modelBuilder.ApplyConfiguration(new PriceOfferConfig());
+        modelBuilder.ApplyConfiguration(new LineItemConfig());
+    }
+}
+````
+
+````c#
+// BookConfig extension class configures Book entity class
+internal class BookConfig : IEntityTypeConfiguration<Book>
+{
+    public void Configure(EntityTypeBuilder<Book> entity)
+    {
+        entity.Property(p => p.PublishedOn)
+            .HasColumnType("date"); // Convention-based mapping for .NET DateTime is SQL datetime2. This command changes the SQL column type to date, which holds only the date, not the time.
+
+        entity.Property(p => p.Price)
+            .HasPrecision(9,2); // The precision of (9,2) sets a max price of 9,999,999.99 (9 digits, 2 after decimal point), which takes up the smallest size in the database.
+
+        entity.Property(x => x.ImageUrl)
+            .IsUnicode(false); // The conventionbased mapping for .NET string is SQL nvarchar (16 bit Unicode). This command changes the SQL column type to varchar (8-bit ASCII).
+
+        entity.HasIndex(x => x.PublishedOn); // Adds an index to the PublishedOn property because you sort and filter on this property
+    }
+}
+````
+
+
+
+`OnModelCreating` is called when the application first accesses the application’s DbContext. At that stage, EF Core configures itself by using all three approaches: By Convention, Data Annotations, and any Fluent API you’ve added in the `OnModelCreating` method.
+
+
+
+### Excluding properties and classes from the database
+
+At times, you’ll want to exclude data in your entity classes from being in the database. You might want to have local data for a calculation used during the lifetime of the class instance, for example, but you don’t want it saved to the database. You can exclude a class or a property in two ways: via Data Annotations or via the Fluent API.
+
+
+
+#### Excluding a class or property via Data Annotations
+
+EF Core will exclude a property or a class that has a `[NotMapped]` data attribute applied to it.
+
+
+
+````c#
+// Excluding three properties, two by using [NotMapped]
+public class MyEntityClass
+{
+    public int MyEntityClassId { get; set; }
+
+    public string NormalProp{ get; set; } // Included: A normal public property, with public getter and setter
+
+    [NotMapped] // Excluded: Placing a [NotMapped] attribute tells EF Core to not map this property to a column in the database.
+    public string LocalString { get; set; }
+    
+    public ExcludeClass LocalClass { get; set; } // Excluded: This class won’t be included in the database because the class definition has a [NotMapped] attribute on it.
+}
+
+[NotMapped] // Excluded: This class will be excluded because the class definition has a [NotMapped] attribute on it.
+public class ExcludeClass
+{
+    public int LocalInt { get; set; }
+}
+````
+
+
+
+#### Excluding a class or property via the Fluent API
+
+In addition, you can exclude properties and classes by using the Fluent API configuration command Ignore.
+
+
+
+````c#
+// Excluding a property and a class by using the Fluent API
+public class ExcludeDbContext : DbContext
+{
+    public DbSet<MyEntityClass> MyEntities { get; set; }
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<MyEntityClass>()
+            .Ignore(b => b.LocalString); // The Ignore method is used to exclude the LocalString property in the entity class, MyEntityClass, from being added to the database.
+
+        modelBuilder.Ignore<ExcludeClass>(); // A different Ignore method can exclude a class such that if you have a property in an entity class of the Ignored type, that property isn’t added to the database.
+    }
+}
+````
+
+
+
+EF Core will ignore read-only properties - that is, a property with only a getter (such as `public int MyProp { get; }`).
+
+
+
+### Setting database column type, size, and nullability
+
+The convention-based modeling uses default values for the SQL type, size/precision, and nullability based on the .NET type. A common requirement is to set one or more of these attributes manually, either because you’re using an existing database or because you have performance or business reasons to do so.
+
+
+
+Set not null (Default is nullable.)
+
+​	Data Annotations
+
+* ````c#
+  [Required]
+  public string MyProp { get; set; }
+  ````
+
+​	Fluent API
+
+* ````c#
+  modelBuilder.Entity<MyClass>()
+      .Property(p => p.MyProp)
+      .IsRequired();
+  ````
+
+Set size (string) (Default is MAX length.)
+
+​	Data Annotations
+
+* ````c#
+  [MaxLength(123)]
+  public string MyProp { get; set; }
+
+​	Fluent API
+
+* ````c#
+  modelBuilder.Entity<MyClass>()
+      .Property(p => p.MyProp)
+      .HasMaxLength(123);
+  ````
+
+Set SQL type/size (Each type has a default precision and size.)
+
+​	Data Annotations
+
+* ````c#
+  [Column(TypeName = "date")]
+  public DateTime PublishedOn { get; set; }
+  ````
+
+  Fluent API
+
+* ````c#
+  modelBuilder.Entity<MyClass>(
+      .Property(p => p.PublishedOn)
+      .HasColumnType("date");
+
+
+
+Some specific SQL types have their own Fluent API commands, which are shown in the following list.
+
+* `IsUnicode(false)` - Sets the SQL type to `varchar(nnn)` (1-byte character, known as ASCII) rather than the default of `nvarchar(nnn)` (2-byte character, known as Unicode).
+* `HasPrecision(precision, scale)` - Sets the number of digits (`precision` parameter) and how many of the digits are after the decimal point (`scale` parameter). This Fluent command is new in EF Core 5. The default setting of the SQL `decimal` is (18,2).
+* `HasCollation("collation name")` - Another EF Core 5 feature that allows you to define the collation on a property - that is, the sorting rules, case, and accent sensitivity properties of `char` and `string` types.
+
+Recommend using the `IsUnicode(false)` method to tell EF Core that a string property contains only single-byte ASCII-format characters, because using the `IsUnicode` method allows you to set the string size separately.
+
+
+
+### Value conversions: Changing data to/from the database
+
+EF Core’s value conversions feature allows you to change data when reading and writing a property to the database. Typical uses are
+
+* Saving `Enum` type properties as a string (instead of a number) so that it’s easier to understand when you’re looking at the data in the database
+
+* Fixing the problem of `DateTime` losing its UTC (Coordinated Universal Time) setting when read back from the database
+* (Advanced) Encrypting a property written to the database and decrypting on reading back
+
+The value conversions have two parts:
+
+* Code that transforms the data as it is written out to the database
+* Code that transforms the database column back to the original type when read back
+
+
+
+The first example of value conversions deals with a limitation of the SQL database in storing `DateTime` types, in that it doesn’t save the `DateTimeKind` part of the `DateTime` struct that tells us whether the `DateTime` is local time or UTC. This situation can cause problems. If you send that `DateTime` to your frontend using JSON, for example, the `DateTime` won’t contain the Z suffix character that tells JavaScript that the time is UTC, so your frontend code may display the wrong time. The following listing shows how to configure a property to have a value conversion that sets the `DateTimeKind` on the return from the database.
+
+````c#
+// Configuring a DateTime property to replace the lost DateTimeKind setting
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    var utcConverter = new ValueConverter<DateTime, DateTime>( // Creates a ValueConverter from DateTime to DateTime
+        toDb => toDb, // Saves the DateTime to the database in the normal way (such as no conversion)
+        fromDb => DateTime.SpecifyKind(fromDb, DateTimeKind.Utc)); // On reading from the database, you add the UTC setting to the DateTime.
+
+    modelBuilder.Entity<ValueConversionExample>()
+        .Property(e => e.DateTimeUtcUtcOnReturn) // Selects the property you want to configure
+        .HasConversion(utcConverter); // Adds the utcConverter to that property
+
+    //… other configurations left out
+}
+````
+
+In this case, you had to create your own value converter, but about 20 built-in value converters are available. In fact, one value converter is so popular that it has a predefined Fluent API method or an attribute - a conversion to store an `Enum` as a string in the database.
+
+`Enum`s are normally stored in the database as numbers, which is an efficient format, but it does make things harder if you need to delve into the database to work out what happened. So some developers like to save `Enum`s in the database as a string. You can configure a conversion of an `Enum` type to a string by using the `HasConversion<string>()` command, as in the following code snippet:
+
+````c#
+modelBuilder.Entity<ValueConversionExample>()
+    .Property(e => e.Stage)
+    .HasConversion<string>();
+````
+
+
+
+Following are some rules and limitations on using value conversions:
+
+* A `null` value will never be passed to a value converter. You need to write a value converter to handle only the non-null value, as your converter will be called only if the value isn’t a `null`.
+* Watch out for queries that contain sorting on a converted value. If you converted your `Enum`s to a string, for example, the sorting will sort by the `Enum` name, not by the `Enum` value.
+* The converter can only map a single property to a single column in the database.
+* You can create some complex value converters, such as serializing a list of `int`s to a JSON string. At this point, EF Core cannot compare the `List<int>` property with the JSON in the database, so it won’t update the database. To solve this problem, you need to add what is called a *value comparer*.
+
+
+
+### The different ways of configuring the primary key
+
+You need to configure the primary key explicitly in two situations:
+
+* When the key name doesn’t fit the By Convention naming rules
+* When the primary key is made up of more than one property/column, called a *composite key*
+
+A many-to-many relationship-linking table is an example of where the By Convention approach doesn’t work. You can use two alternative approaches to define primary keys.
+
+
+
+#### Configuring a primary key via Data Annotations
+
+The `[Key]` attribute allows you to designate one property as the primary key in a class. Use this annotation when you don’t use the By Convention primary key name. This code is simple and clearly marks the primary key.
+
+
+
+````c#
+// Defining a property as the primary key bu using the [Key] annotation
+private class SomeEntity
+{
+    [Key] // [Key] attribute tells EF Core that the property is a primary key.
+    public int NonStandardKeyName { get; set; }
+
+    public string MyString { get; set; }
+}
+````
+
+
+
+Note that the `[Key]` attribute can’t be used for composite keys. In earlier versions of EF Core, you could define composite keys by using `[Key]` and `[Column]` attributes, but that feature has been removed.
+
+
+
+#### Configuring a primary key via the Fluent API
+
+You can also configure a primary key via the Fluent API, which is useful for primary keys that don’t fit the By Convention patterns. The first primary key is a single primary key with a nonstandard name in the `SomeEntity` entity class, and the second is a composite primary key, consisting of two columns, in the BookAuthor linking table.
+
+
+
+````c#
+// Using the Fluent API to configure primary keys on two entity classes
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<SomeEntity>()
+        .HasKey(x => x.NonStandardKeyName); // Defines a normal, single-column primary key. Use HasKey when your key name doesn’t match the By Convention defaults.
+
+    modelBuilder.Entity<BookAuthor>()
+        .HasKey(x => new {x.BookId, x.AuthorId}); // Uses an anonymous object to define two (or more) properties to form a composite key. The order in which the properties appear in the anonymous object defines their order.
+
+    //… other configuration settings removed
+}
+````
+
+
+
+There is no By Convention version for composite keys, so you must use the Fluent API’s `HasKey` method.
+
+
+
+#### Configuring an entity as read-only
+
+In some advanced situations, your entity class might not have a primary key. Here are three examples:
+
+* *You want to define an entity class as read-only.* If an entity class hasn’t got a primary key, then EF Core will treat it as read-only.
+* *You want to map an entity class to a read-only SQL View.* SQL Views are SQL queries that work like SQL tables.
+* *You want to map an entity class to an SQL query by using the ToSqlQuery Fluent API command.* The `ToSqlQuery` method allows you to define an SQL command string that will be executed when you read in that entity class.
+
+To set an entity class explicitly as read-only, you can use the fluent API `HasNoKey()` command or apply the attribute `[Keyless]` to the entity class. And if your entity class doesn’t have a primary key, you must mark it as read-only, using either of the two approaches. Any attempt to change the database via an entity class with no primary key will fail with an exception. EF Core does this because it can’t execute the update without a key, which is one way you can define an entity class as read-only. The other way to mark an entity as read-only is to map an entity to an SQL View by using the fluent API method `ToView("ViewNameString")` command, as shown in the following code snippet:
+
+````c#
+modelBuilder.Entity<MyEntityClass>()
+    .ToView("MyView");
+````
+
+EF Core will throw an exception if you try to change the database via an entity class that is mapped to a View. If you want to map an entity class to an updatable view - an SQL View that can be updated - you should use the `ToTable` command instead.
+
+
+
+### Adding indexes to database columns
+
+Relational databases have a feature called an *index*, which provides quicker searching and sorting of rows based on the column, or columns, in the index. In addition, an index may have a constraint, which ensures that each entry in the index is unique. A primary key is given a unique index, for example, to ensure that the primary key is different for each row in the table.
+
+An index will speed quick searching and sorting, and if you add the unique constraint, the database will ensure that the column value in each row will be different.
+
+
+
+Add index, Fluent
+
+````c#
+modelBuilder.Entity<MyClass>()
+    .HasIndex(p => p.MyProp);
+````
+
+Add index, Attribute
+
+````c#
+[Index(nameof(MyProp))]
+public class MyClass …
+````
+
+Add index, multiple columns
+
+````c#
+modelBuilder.Entity<Person>()
+    .HasIndex(p => new {p.First, p.Surname});
+````
+
+Add index, multiple columns, Attribute
+
+````c#
+[Index(nameof(First), nameof(Surname)]
+public class MyClass …
+````
+
+Add unique index, Fluent
+
+````c#
+modelBuilder.Entity<MyClass>()
+    .HasIndex(p => p.BookISBN)
+    .IsUnique();
+````
+
+Add unique index, Attribute
+
+````c#
+[Index(nameof(MyProp), IsUnique = true)]
+public class MyClass …
+````
+
+Add named index, Fluent
+
+````c#
+modelBuilder.Entity<MyClass>()
+    .HasIndex(p => p.MyProp)
+    .HasDatabaseName("Index_MyProp");
+````
+
+
+
+Some databases allow you to specify a filtered or partial index to ignore certain situations by using a `WHERE` clause. You could set a unique filtered index that ignored any soft-deleted items, for example. To set up a filtered index, you use the `HasFilter` Fluent API method containing an SQL expression to define whether the index should be updated with the value. The following code snippet gives an example of enforcing that the property MyProp will contain a unique value unless the SoftDeleted column of the table is `true`:
+
+````c#
+modelBuilder.Entity<MyClass>()
+    .HasIndex(p => p.MyProp)
+    .IsUnique()
+    .HasFilter(“NOT SoftDeleted");
+````
+
+
+
+When you’re using the SQL Server provider, EF adds an `IS NOT NULL` filter for all nullable columns that are part of a unique index. You can override this convention by providing `null` to the `HasFilter` parameter - that is `HasFilter(null)`.
+
+
+
+### Configuring the naming on the database side
+
