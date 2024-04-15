@@ -4765,3 +4765,176 @@ Here are some recommendations and limitations that you should know about if you 
 
 
 ### Defining some relationship terms
+
+
+
+![](./diagrams/images/08_01_some_keys.png)
+
+
+
+* *Principal key* - A new term, taken from EF Core’s documentation, that refers to either the primary key, or the new alternate key, which has a unique value per row and isn’t the primary key
+* *Principal entity* - The entity that contains the principal-key properties, which the dependent relationship refer to via a foreign key(s)
+* *Dependent entity* - The entity that contains the foreign-key properties that refer to the principal entity
+* *Principal key* - The entity has a principal key, also known as the primary key, which is unique for each entity stored in the database
+* *Navigational property* - A term taken from EF Core’s documentation that refers to the property containing a single entity class, or a collection of entity classes, that EF Core uses to link entity classes
+* *Foreign key* - Holds the principal key value(s) of the database row it’s linked to (or could be null)
+* *Required relationship* - A relationship in which the foreign key is non-nullable (and principal entity must exist)
+* *Optional relationship* - A relationship in which the foreign key is nullable (and principal entity can be missing)
+* *Composite keys* - A principal key and a foreign key can consist of more than one property/column.
+
+
+
+### What navigational properties do you need?
+
+The configuring of relationships between entity classes should be guided by the business needs of your project. You could add navigational properties at both ends of a relationship, but that suggests that every navigational property is useful, and some navigational properties aren’t. It is good practice to provide only navigational properties that make sense from the business or software design point of view.
+
+In our Book App, for example, the `Book` entity class has many `Review` entity classes, and each `Review` class is linked, via a foreign key, to one `Book`. Therefore, you could have a navigational property of type `ICollection<Review>` in the `Book` class and a navigational property of type `Book` in the `Review` class. In that case, you’d have a fully defined relationship: a relationship with navigational properties at both ends.
+
+But do you need a fully defined relationship?
+
+* Does the `Book` entity class need to know about the `Review` entity classes? Yes, because we want to calculate the average review score.
+* Does the `Review` entity class need to know about the `Book` entity class? No, because in this example application, we don’t do anything with that relationship.
+
+Our solution, therefore, is to have only the `ICollection<Review>` navigational property in the `Book` class.
+You should add a navigational property only when it makes sense from a business point of view or when you need a navigational property to create (EF Core’s Add) an entity class with a relationship. Minimizing navigational properties will help make the entity classes easier to understand.
+
+
+
+### Configuring relationships
+
+EF Core has three ways to configure relationships. Here are the three approaches for configuring properties, but focused on relationships:
+
+* *By Convention* - EF Core finds and configures relationships by looking for references to classes that have a primary key in them.
+* *Data Annotations* - These annotations can be used to mark foreign keys and relationship references.
+* *Fluent API* - This API provides the richest set of commands to configure any relationship fully.
+
+The By Convention approach can autoconfigure many relationships for you if you follow its naming standards. The Fluent API allows you to define every part of a relationship manually, which can be useful if you have a relationship that falls outside the By Convention approach.
+
+
+
+### Configuring relationships By Convention
+
+The By Convention approach is a real time-saver when it comes to configuring relationships.
+
+The rules are straightforward, but the ways that the property name, type, and nullability work together to define a relationship take a bit of time to absorb.
+
+
+
+#### What makes a class an entity class?
+
+1. EF Core scans the application’s DbContext, looking for any public `DbSet<T>` properties. It assumes that the classes, `T`, in the `DbSet<T>` properties are entity classes.
+2. EF Core also looks at every public property in the classes found in step 1 and looks at properties that could be navigational properties. The properties whose type contains a class that isn’t defined as being scalar properties (`string` is a class, but it’s defined as a scalar property) are assumed to be navigational properties. These properties may appear as a single link (such as `public PriceOffer Promotion( get; set; }`) or a type that implements the `IEnumerable<T>` interface(such as `public ICollection<Review> Reviews { get; set; }`).
+3. EF Core checks whether each of these entity classes has a primary key. If the class doesn’t have a primary key and hasn’t been configured as not having a key, or if the class isn’t excluded, EF Core will throw an exception.
+
+
+
+#### An example of an entity class with navigational properties
+
+````c#
+// The Book entity class, with the relationships at the bottom
+public class Book
+{
+    public int BookId { get; set; }
+    //other scalar properties removed as not relevant…
+
+    public PriceOffer Promotion { get; set; } // Links to a PriceOffer, which is one-to-zeroor- one relationship
+
+    public ICollection<Tag> Tags { get; set; } // Links directly to a list of Tag entities, using EF Core 5’s automatic many-to-many relationship
+
+    public ICollection<BookAuthor> AuthorsLink { get; set; } // Links to one side of the many-to-many relationship of authors via a linking table
+
+    public ICollection<Review> Reviews { get; set; } // Links to any reviews for this book: one-to-many relationship
+}
+````
+
+
+
+If two navigational properties exist between the two entity classes, the relationship is known as fully defined, and EF Core can work out By Convention whether it’s a one-to-one or a one-to-many relationship. If only one navigational property exists, EF Core can’t be sure, so it assumes a one-to-many relationship.
+
+Certain one-to-one relationships may need configuration via the Fluent API if you have only one navigational property or if you want to change the default By Convention setting, such as when you’re deleting an entity class with a relationship.
+
+
+
+#### How EF Core finds foreign keys By Convention
+
+A foreign key must match the principal key in type and in name, but to handle a few scenarios, foreign-key name matching has three options. The figure shows all three options for a foreign-key name using the entity class `Review` that references the primary key, `BookId`, in the entity class `Book`.
+
+
+
+![](./diagrams/images/08_02_foreign_key.png)
+
+
+
+````c#
+// A hierarchical relationship with an option-3 foreign key
+public class Employee
+{
+    public int EmployeeId { get; set; }
+
+    public string Name { get; set; }
+
+    //------------------------------
+    //Relationships
+
+    public int? ManagerEmployeeId { get; set; } // Foreign key uses the <NavigationalPropertyName><PrimaryKeyName> pattern
+    public Employee Manager { get; set; }
+}
+````
+
+The entity class called `Employee` has a navigational property called `Manager` that links to the employee’s manager, who is an employee as well. You can’t use a foreign key of `EmployeeId` (option 1), because it’s already used for the primary key. Therefore, you use option 3 and call the foreign key `ManagerEmployeeId` by using the navigational property name at the start.
+
+
+
+#### Nullability of foreign keys: Required or optional dependent relationships
+
+The nullability of the foreign key defines whether the relationship is required (nonnullable foreign key) or optional (nullable foreign key). A *required relationship* ensures that relationships exist by ensuring that the foreign key is linked to a valid principal key.
+
+An *optional* relationship allows there to be no link between the principal entity and the dependent entity by having the foreign-key value(s) set to `null`. The `Manager` navigational property in the `Employee` entity class, is an example of an optional relationship, as someone at the top of the business hierarchy won’t have a boss.
+
+The required or optional status of the relationship also affects what happens to dependent entities when the principal entity is deleted. The default setting of the `OnDelete` action for each relationship type is as follows:
+
+* For a *required relationship*, EF Core sets the `OnDelete` action to `Cascade`. If the principal entity is deleted, the dependent entity will be deleted too.
+* For a *optional relationship*, EF Core sets the `OnDelete` action to `ClientSetNull`. If the dependent entity is being tracked, the foreign key will be set to `null` when the principal entity is deleted. But if the dependent entity isn’t being tracked, the database constraint delete setting takes over, and the `ClientSetNull` setting sets the database rules as though the `Restrict` setting were in place. The result is that the delete fails at the database level, and an exception is thrown.
+
+
+
+#### Foreign keys: What happens if you leave them out?
+
+If EF Core finds a relationship via a navigational property or through a relationship you configured via the Fluent API, it needs a foreign key to set up the relationship in the relational database. Including foreign keys in your entity classes is good practice, giving you better control of the nullability of the foreign key. Also, access to foreign keys can be useful when you’re handling relationships in a disconnected update.
+
+But if you do leave out a foreign key (on purpose or by accident), EF Core configuration will add a foreign key as a shadow property. *Shadow properties* are hidden properties that can be accessed only via specific EF Core commands. Having foreign keys added automatically as shadow properties can be useful. One of my clients, for example, had a general `Note` entity class that was added to a `Notes` collection in many entities.
+
+A one-to-many relationship in which the `Note` entity class is used in a collection navigational property in two entity classes: `Customer` and `Job`. Note that the primary-key names of the `Customer` and `Job` entity classes use different By Convention naming approaches to show how the shadow properties are named.
+
+
+
+![](./diagrams/images/08_03_shadow_properties.png)
+
+
+
+If the entity class that gains a shadow property foreign key has a navigational link to the other end of the relationship, the name of that shadow property would be `<navigation property name><principal key property name>`. If the `Note` entity has a navigational link back to the `Customer` entity called `LinkBack`, the shadow property foreign key’s name would be `LinkBackId`.
+
+If you want to add a foreign key as a shadow property, you can do that via the Fluent API `HasForeignKey`, but with the name of the shadow property name provided via a string. Be careful not to use the name of an existing property, as that will not add a shadow property but will use the existing property.
+
+
+
+#### When does By Convention configuration not work?
+
+If you’re going to use the By Convention configuration approach, you need to know when it’s not going to work so that you can use other means to configure your relationship. Here’s my list of scenarios that won’t work, with the most common listed first:
+
+* You have composite foreign keys.
+* You want to create a one-to-one relationship without navigational links going both ways.
+* You want to override the default delete-behavior setting.
+* You have two navigational properties going to the same class.
+* You want to define a specific database constraint.
+
+
+
+### Configuring relationships by using Data Annotations
+
+Only two Data Annotations relate to relationships, as most of the navigational configuration is done via the Fluent API: the `ForeignKey` and `InverseProperty` annotations.
+
+
+
+#### The ForeignKey Data Annotation
+
