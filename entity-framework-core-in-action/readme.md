@@ -4938,3 +4938,461 @@ Only two Data Annotations relate to relationships, as most of the navigational c
 
 #### The ForeignKey Data Annotation
 
+````c#
+// Using the ForeignKey data annotation to set the foreign-key name
+public class Employee
+{
+    public int EmployeeId { get; set; }
+    public string Name { get; set; }
+
+    public int? ManagerId { get; set; }
+    [ForeignKey(nameof(ManagerId))] // Defines which property is the foreign key for the Manager navigational property
+    public Employee Manager { get; set; }
+}
+````
+
+The `ForeignKey` data annotation takes one parameter, which is a string. This string should hold the name of the foreign-key property. If the foreign key is a composite key (has more than one property), it should be comma-delimited - as in `[ForeignKey("Property1, Property2")]`.
+
+
+
+#### The InverseProperty Data Annotation
+
+The `InverseProperty` Data Annotation is a rather specialized Data Annotation for use when you have two navigational properties going to the same class. At that point, EF Core can’t work out which foreign keys relate to which navigational property. This situation is best shown in code. The following listing shows an example `Person` entity class with two lists: one for books owned by the librarian and one for `Books` out on loan to a specific person.
+
+````c#
+// LibraryBook entity class with two relationships to Person class
+public class LibraryBook
+{
+    public int LibraryBookId { get; set; }
+    public string Title { get; set; }
+
+    public int LibrarianPersonId { get; set; }
+    public Person Librarian { get; set; }
+
+    public int? OnLoanToPersonId { get; set; }
+    public Person OnLoanTo { get; set; }
+}
+````
+
+The `Librarian` and the borrower of the book (`OnLoanTo` navigational property) are both represented by the `Person` entity class. The `Librarian` navigational property and the `OnLoanTo` navigational property both link to the same class, and EF Core can’t set up the navigational linking without help. The `InverseProperty` Data Annotation shown in the following listing provides the information to EF Core when it’s configuring the navigational links.
+
+````c#
+// The Person entity class, which uses the InverseProperty annotation
+public class Person
+{
+    public int PersonId { get; set; }
+    public string Name { get; set; }
+
+    [InverseProperty("Librarian")] // Links LibrarianBooks to the Librarian navigational property in the LibraryBook class
+    public ICollection<LibraryBook> LibrarianBooks { get; set; }
+
+    [InverseProperty("OnLoanTo")] // Links the BooksBorrowedByMe list to the OnLoanTo navigational property in the LibraryBook class
+    public ICollection<LibraryBook> BooksBorrowedByMe { get; set; }
+}
+````
+
+This code is one of those configuration options that you rarely use, but if you have this situation, you must either use it or define the relationship with the Fluent API. Otherwise, EF Core will throw an exception when it starts, as it can’t work out how to configure the relationships.
+
+
+
+### Fluent API relationship configuration commands
+
+All Fluent API relationship configuration commands follow this pattern.
+
+
+
+![](./diagrams/images/08_04_fluent_api.png)
+
+
+
+#### Creating a one-to-one relationship
+
+One-to-one relationships can get a little complicated because there are three ways to build them in a relational database.
+
+
+
+![](./diagrams/svg/08_01_one_to_one_relationship.drawio.svg)
+
+
+
+Option 1 is the standard approach to building one-to-one relationships, because it allows you to define that the one-to-one dependent entity is required (must be present). In our example, an exception will be thrown if you try to save an `Attendee` entity instance without a unique `Ticket` attached to it.
+
+With the option-1 one-to-one arrangement, you can make the dependent entity optional by making the foreign key nullable. `WithOne` method has a parameter that picks out the `Attendee` navigational property in the `Ticket` entity class that links back to the `Attendee` entity class. Because the `Attendee` class is the dependent part of the relationship, if you delete the `Attendee` entity, the linked `Ticket` won’t be deleted, because the `Ticket` is the principal entity in the relationship. The downside of option 1 in this example is that it allows one `Ticket` to be used for multiple `Attendees`, which doesn’t match the business rules I stated at the start. Finally, this option allows you to replace `Ticket` with another `Ticket` instance by assigning a new `Ticket` to the Attendee’s `Ticket` navigational property.
+
+
+
+
+![](./diagrams/svg/08_02_one_to_one_relationship.drawio.svg)
+
+
+
+
+Options 2 and 3 turn the principal/dependent relationship around, with the Attendee becoming the principal entity in the relationship. This situation swaps the required/optional nature of the relationship. Now the Attendee can exist without the Ticket, but the Ticket can’t exist without the Attendee. Options 2 and 3 do enforce the assignment of a Ticket to only one Attendee, but replacing Ticket with another Ticket instance requires you to delete the old ticket first.
+
+
+
+![](./diagrams/svg/08_03_one_to_one_relationship.drawio.svg)
+
+
+
+Option 2 and 3 are useful because they form optional one-to-one relationships, often referred to as *one-to-zero-or-one* relationships. Option 3 is a more efficient way to define option 2, with the primary key and the foreign key combined. Another, even better version uses an `Owned` type because it is automatically loaded from the same table, which is safer and more efficient.
+
+
+
+#### Creating a one-to-many relationship
+
+One-to-many relationships are simpler, because there’s one format: the many entities contain the foreign-key value. You can define most one-to-many relationships with the By Convention approach simply by giving the foreign key in the many entities a name that follows the By Convention approach.
+
+
+
+![](./diagrams/svg/08_04_one_to_many_relationship.drawio.svg)
+
+
+
+You can use any generic type for a collection that implements the `IEnumerable<T>` interface, such as `IList<T>`, `Collection<T>`, `HashSet<T>`, `List<T>`, and so on. `IEnumerable<T>` on its own is a special case, as you can’t add to that collection.
+
+For performance reasons, you should use `HashSet<T>` for navigational collections, because it improves certain parts of EF Core’s query and update processes. But `HashSet` doesn’t guarantee the order of entries, which could cause problems if you add sorting to your Includes. If you might sort your Include methods, as `ICollection` preserves the order in which entries are added. You don’t use sort in `Include`s so that you can use `HashSet<T>` for better performance.
+
+Second, although you typically define a collection navigational property with a getter and a setter (such as `public ICollection<Review> Reviews { get; set; }`), doing so isn’t necessary. You can provide a getter only if you initialize the backing field with an empty collection. The following is also valid:
+
+````c#
+public ICollection<Review> Reviews { get; } = new List<Review>();
+````
+
+
+
+Although initializing the collection might make things easier in this case, we don’t recommend initializing a navigational collection property.
+
+
+
+#### Creating a many-to-many relationship
+
+* *Your linking table contains information that you want to access when reading in the data on the other side of the many-to-many relationship.* An example is the `Book` to `Author` many-to-many relationship, in which the linking table contains the order in which the `Author` `Name`s should be shown.
+* *You directly access the other side of the many-to-many relationship.* An example is the `Book` to `Tag` many-to-many relationship, in which you can directly access the `Tags` collection in the `Book` entity class without ever needing to access the linking table.
+
+
+
+**CONFIGURING A MANY-TO-MANY RELATIONSHIP USING A LINKING ENTITY CLASS**
+
+You start with the many-to-many relationship in which you access the other end of the relationship via the linking table. This relationship takes more work but allows you to add extra data to the linking table, which you can sort/filter on.
+
+
+
+![](./diagrams/svg/08_05_many_to_many_relationship.drawio.svg)
+
+
+
+In the `Book`/`Author` example, the By Convention configuration can find and link all the scalar and navigational properties so that the only configuration required is setting up the primary key.
+
+
+
+````c#
+// Configuring a many-to-many relationship via two one-to-many relationships
+public static void Configure(this EntityTypeBuilder<BookAuthor> entity)
+{
+    entity.HasKey(p => new { p.BookId, p.AuthorId }); // Uses the names of the Book and Author primary keys to form its own composite key
+
+    //-----------------------------
+    //Relationships
+
+    entity.HasOne(p => p.Book)
+        .WithMany(p => p.AuthorsLink)
+        .HasForeignKey(p => p.BookId); // Configures the one-to-many relationship from the Book to BookAuthor entity class
+
+    entity.HasOne(p => p.Author)
+        .WithMany(p => p.BooksLink)
+        .HasForeignKey(p => p.AuthorId); // Configures the one-to-many relationship from the Author to the BookAuthor entity class
+}
+````
+
+
+
+**CONFIGURING A MANY-TO-MANY RELATIONSHIP WITH DIRECT ACCESS TO THE OTHER ENTITY**
+
+The By Convention configuration works well for a direct many-to-many relationship. If the entity classes at the two ends are valid, the By Convention configuration will set up the relationships and keys for you. By Convention will also create the linking entity for you by using a property bag.
+
+
+
+![](./diagrams/svg/08_06_many_to_many_relationship.drawio.svg)
+
+
+
+But if you want to add your own linking table and configuration, you can do that via Fluent API configuration. The entity class for the linking table is similar to the `BookAuthor` linked entity class. The difference is that the `Author` key/relationship is replaced by the `Tag` key/relationship. The following listing shows the `Book` configuration class setting up the `BookTag` entity class to link the two parts.
+
+````c#
+// Configuring direct many-to-many relationships using Fluent API
+public void Configure(EntityTypeBuilder<Book> entity)
+{
+    //… other configrations left out for clarity
+
+    entity.HasMany(x => x.Tags)
+        .WithMany(x => x.Books) // The HasMany/WithMany sets up a direct many-to-many relationship.
+        .UsingEntity<BookTag>( // The UsingEntity<T> method allows you to define an entity class for the linking table.
+        bookTag => bookTag.HasOne(x => x.Tag)
+        	.WithMany().HasForeignKey(x => x.TagId), // Defined Tag side of the many-to-many relationship
+        bookTag => bookTag.HasOne(x => x.Book)
+        	.WithMany().HasForeignKey(x => x.BookId)); // Defined Book side of the many-to-many relationship
+}
+````
+
+
+
+### Controlling updates to collection navigational properties
+
+Sometimes, you need to control access to collection navigational properties. Although you can control access to a one-to-one navigational by making the setter private, that approach doesn’t work for a collection, as most collection types allow you to add or remove entries.
+
+Storing the collection of linked entities classes in a field allows you to intercept any attempt to update a collection. Here are some business/software design reasons why this feature is useful:
+
+* Triggering some business logic on a change, such as calling a method if a collection contains more than ten entries.
+* Building a local cached value for performance reasons, such as holding a cached `ReviewsAverageVotes` property whenever a `Review` is added to or removed from your `Book` entity class.
+* Applying a DDD to your entity classes. Any change to data should be done via a method.
+
+For the example of controlling collection navigational properties, you are going to add a cached `ReviewsAverageVotes` property to the `Book` class. This property will hold the average of the votes in all the `Reviews` linked to this `Book`. To do so, you need to
+
+* Add a backing field called `_reviews` to hold the `Reviews` collection and change the property to return a read-only copy of the collection held in the `_reviews` backing field.
+* Add a read-only property called `ReviewsAverageVotes` to hold the cached average votes from the `Reviews` linked to this `Book`.
+* Add methods to Add `Reviews` to and `Remove Reviews` from the `_reviews` backing field. Each method recalculates the average votes, using the current list of `Reviews`.
+
+The following listing shows the updated `Book` class showing the code related to the `Reviews` and the cached `ReviewsAverageVotes` property.
+
+````c#
+// Book class with a read-only Reviews collection navigational property
+public class Book
+{
+    private readonly ICollection<Review> _reviews = new List<Review>(); // You add a backing field, which is a list. By default, EF Core will read and write to this field.
+
+    public int BookId { get; set; }
+    public string Title { get; set; }
+    //… other properties/relationships left out
+
+    public double? ReviewsAverageVotes { get; private set; } // Holds a precalculated average of the reviews and is read-only
+
+    // A read-only collection so that no one can change the collection
+    public IReadOnlyCollection<Review> Reviews => _reviews.ToList(); // Returns a copy of the reviews in the _reviews backing field
+
+    public void AddReview(Review review) // Adds a method to allow a new Review to be added to the _reviews collection
+    {
+        _reviews.Add(review); // Adds the new review to the backing field _reviews and updates the database on the call to SaveChanges
+        ReviewsAverageVotes = _reviews.Average(x => x.NumStars); // Recalculates the average votes for the book
+    }
+
+    public void RemoveReview(Review review) // Adds a method to remove a review from the _reviews collection
+    {
+        _reviews.Remove(review); // Removes the review from the list and updates the database on the call to SaveChanges
+        ReviewsAverageVotes = _reviews.Any()
+            ? _reviews.Average(x => x.NumStars) // If there are any reviews, recalculates the average votes for the book
+            : (double?)null; // If there are no reviews, sets the value to null
+    }
+}
+````
+
+
+
+You didn’t have to configure the backing field because you were using By Convention naming, and by default, EF Core reads and writes data to the `_reviews` field.
+
+This example shows how to make your collection navigational properties read-only, but it’s not perfect because concurrent updates could make the `ReviewsAverageVotes` cache property out of date.
+
+
+
+### Additional methods available in Fluent API relationships
+
+* `OnDelete` - Changes the delete action of a dependent entity
+* `IsRequired` - Defines the nullability of the foreign key
+* `HasPrincipalKey` - Uses an alternate unique key
+* `HasConstraintName` - Sets the foreign-key constraint name and `MetaData` access to the relationship data
+
+
+
+#### OnDelete: Changing the delete action of a dependent entity
+
+The `OnDelete` Fluent API method allows you to alter what EF Core does when a deletion that affects a dependent entity occurs.
+
+You can add the `OnDelete` method to the end of a Fluent API relationship configuration. The code added to stop a `Book` entity from being deleted if it was referred to in a customer order, via the `LineItem` entity class.
+
+````c#
+// Changing the default OnDelete action on a dependent entity
+public static void Configure(this EntityTypeBuilder<LineItem> entity)
+{
+    entity.HasOne(p => p.ChosenBook)
+        .WithMany()
+        .OnDelete(DeleteBehavior.Restrict);
+}
+````
+
+This code causes an exception to be thrown if someone tries to delete a `Book` entity that a `LineItem`’s foreign key links to that `Book`. You do this because you want a customer’s order to not be changed.
+
+
+
+The table explains the possible `DeleteBehavior` settings:
+
+| Name          | Effect of the delete behavior on the dependent entity        | Default for            |
+| ------------- | ------------------------------------------------------------ | ---------------------- |
+| Restrict      | The delete operation isn’t applied to dependent entities. The dependent entities remain unchanged, which may cause the delete to fail, either in EF Core or in the relational database. |                        |
+| SetNull       | The dependent entity isn’t deleted, but its foreign-key property is set to null. If any of the dependent entity foreign-key properties isn’t nullable, an exception is thrown when SaveChanges is called. |                        |
+| ClientSetNull | If EF Core is tracking the dependent entity, its foreign key is set to null, and the dependent entity isn’t deleted. But if EF Core isn’t tracking the dependent entity, the database rules apply. In a database created by EF Core, this DeleteBehavior will set the SQL DELETE constraint to NO ACTION, which causes the delete to fail with an exception. | Optional relationships |
+| Cascade       | The dependent entity is deleted.                             | Required relationships |
+| ClientCascade | For entities being tracked by the DbContext, dependent entities will be deleted when the related principal is deleted. But if EF Core isn’t tracking the dependent entity, the database rules apply. In a database created by EF Core, this will be set to Restrict, which causes the delete to fail with an exception. |                        |
+
+Two delete behaviors whose names start with `Client` are `ClientSetNull` and `ClientCascade`. These two delete behaviors move some of the handling of deletion actions from the database to the client - that is, the EF Core code. These two settings have been added to prevent the problems you can get in some databases, such as SQL Server, when your entities have navigational links that loop back to themselves. In these cases, you would get an error from the database server when you try to create your database, which can be hard to diagnose and fix.
+
+In both cases, these commands execute code inside EF Core that does the same job that the database would do with the `SetNull` and `Cascade` delete behaviors, respectively. But EF Core can apply these changes only if you have loaded all the relevant dependent entities linked to the principal entity that you are going to delete. If you don’t, the database applies its delete rules, which normally will throw an exception.
+
+The `ClientSetNull` delete setting is the default for optional relationships, and EF Core will set the foreign key of the loaded dependent entity class to `null`. If you use EF Core to create/migrate the database, EF Core sets the database delete rules to `ON DELETE NO ACTION` (SQL Server). The database server won’t throw an exception if your entities have a circular loop (referred to as possible cyclic delete paths by SQL Server). The `SetNull` delete setting would set the database delete rules to `ON DELETE SET NULL` (SQL Server), which would cause the database server to throw a `possible cyclic delete paths` exception.
+
+The `ClientCascade` delete setting does the same thing for the database’s cascade-delete feature, in that it will delete any loaded dependent entity class(es). Again, if you use EF Core to create/migrate the database, EF Core sets the database delete rules to `ON DELETE NO ACTION` (SQL Server). The `Cascade` delete setting would set the database delete rules to `ON DELETE CASCADE` (SQL Server), which would cause the database server to throw a `possible cyclic delete paths` exception.
+
+The entity in this listing is loaded with an optional dependent entity, which (by default) has the default delete behavior of `ClientSetNull`. But the same code would work for the `ClientCascade` as long as you load the correct dependent entity or entities.
+
+````c#
+// Deleting a principal entity with an optional dependent entity
+var entity = context.DeletePrincipals // Reads in the principal entity
+    .Include(p => p.DependentDefault) // Includes the dependent entity that has the default delete behavior of ClientSetNull
+    .Single(p => p.DeletePrincipalId == 1);
+
+context.Remove(entity); // Sets the principal entity for deletion
+context.SaveChanges(); // Calls SaveChanges, which sets its foreign key to null
+````
+
+Note that if you don’t include the `Include` method or another way of loading the optional dependent entity, `SaveChanges` will throw a `DbUpdateException` because the database server will have reported a foreign-key constraint violation. One way to align EF Core’s approach to an optional relationship with the database server’s approach is to set the delete behavior to `SetNull` instead of the default `ClientSetNull`, making the foreign-key constraint in the database `ON DELETE SET NULL` (SQL Server) and putting the database in charge of setting the foreign key to `null`. Whether or not you load the optional dependent entity, the outcome of the called `SaveChanges` will be the same: the foreign key on the optional dependent entity will be set to `null`.
+
+But be aware that some database servers may return an error on database creation if you have a delete-behavior setting of `SetNull` or `Cascade` and the servers detect a possible circular relationship, such as hierarchical data. That’s why EF Core has the `ClientSetNull` and `ClientCascade` delete behaviors.
+
+If you’re managing the database creation/migration outside EF Core, it’s important to ensure that the relational database foreign-key constraint is in line with EF Core’s `OnDelete` setting. Otherwise, you’ll get inconsistent behavior, depending on whether the dependent entity is being tracked.
+
+
+
+#### IsRequired: Defining the nullability of the foreign key
+
+In a relationship, the same command sets the nullability of the foreign key, defines whether the relationship is required or optional.
+
+The `IsRequired` method is most useful in shadow properties because EF Core makes shadow properties nullable by default, and the `IsRequired` method can change them to non-nullable.
+
+
+
+````c#
+// The Attendee entity class showing all its relationships
+public class Attendee
+{
+    public int AttendeeId { get; set; }
+    public string Name { get; set; }
+
+    public int TicketId { get; set; } // Foreign key for the one-to-one relationship, Ticket
+    public Ticket Ticket { get; set; } // One-to-one navigational property that accesses the Ticket entity
+
+    public MyOptionalTrack Optional { get; set; } // One-to-one navigational property using a shadow property for the foreign key. By default, the foreign key is nullable, so the relationship is optional.
+    public MyRequiredTrack Required { get; set; } // One-to-one navigational property using a shadow property for the foreign key. You use Fluent API commands to say that the foreign key isn’t nullable, so the relationship is required.
+}
+````
+
+The `Optional` navigational property, which uses a shadow property for its foreign key, is configured by convention, which means that the shadow property is left as a nullable value. Therefore, it’s optional, and if the `Attendee` entity is deleted, the `MyOptionalTrack` entity isn’t deleted.
+
+
+
+You use the `IsRequired` method to make the `Required` one-to-one navigational property as required. Each `Attendee` entity must have a `MyRequiredTrack` entity assigned to the `Required` property.
+
+````c#
+// The Fluent API configuration of the Attendee entity class
+public void Configure(EntityTypeBuilder<Attendee> entity)
+{
+    entity.HasOne(attendee => attendee.Ticket) // Sets up the one-to-one navigational relationship, Ticket, which has a foreign key defined in the Attendee class
+        .WithOne(attendee => attendee.Attendee)
+        .HasForeignKey<Attendee>(attendee => attendee.TicketId) // Specifies the property that’s the foreign key. You need to provide the class type, as the foreign key could be in the principal or dependent entity class.
+        .IsRequired();
+
+    entity.HasOne(attendee => attendee.Required) // Sets up the one-to-one navigational relationship, Required, which doesn’t have a foreign key defined
+        .WithOne(attendee => attendee.Attend)
+        .HasForeignKey<Attendee>("MyShadowFk") // Uses the HasForeignKey<T> method, which takes a string because it’s a shadow property and can be referred to only via a name. Note that you use your own name.
+        .IsRequired(); // Uses IsRequired to say the foreign key should not be nullable
+}
+````
+
+You could’ve left out the configuration of the `Ticket` navigational property, as it would be configured correctly under the By Convention rules, but you leave it in so that you can compare it with the configuration of the `Required` navigational property, which uses a shadow property for its foreign key. The configuration of the `Required` navigational property is necessary because the `IsRequired` method changes the shadow foreign-key property from nullable to non-nullable, which in turn makes the relationship required.
+
+
+
+**TYPE AND NAMING CONVENTIONS FOR SHADOW PROPERTY FOREIGN KEYS**
+
+The `<T>` class tells EF Core where to place the shadow foreign-key property, which can be either end of the relationship for one-to-one relationships or the many entity class of a one-to-many relationship.
+
+The string parameter of the `HasForeignKey<T>(string)` method allows you to define the shadow foreign-key property name. You can use any name; you don’t need to stick with the By Convention name. But you need to be careful not to use a name of any existing property in the entity class you’re targeting, because that approach can lead to strange behaviors. (There’s no warning if you do select an existing property, as you might be trying to define a nonshadow foreign key.)
+
+
+
+#### HasPrincipalKey: Using an alternate unique key
+
+The following listing creates a `Person` entity class, which uses a normal `int` primary key, but you’ll use the `UserId` as an alternate key when linking to the person’s contact information.
+
+````c#
+// Person class, with Name taken from ASP.NET authorization
+public class Person
+{
+    public int PersonId { get; set; }
+
+    public string Name { get; set; }
+
+    public Guid UserId { get; set; } // Holds the person’s unique Id
+
+    public ContactInfo ContactInfo { get; set; } // Navigational property linking to the ContactInfo
+}
+````
+
+````c#
+// ContactInfo class with EmailAddress as a foreign key
+public class ContactInfo
+{
+    public int ContactInfoId { get; set; }
+
+    public string MobileNumber { get; set; }
+    public string LandlineNumber { get; set; }
+
+    public Guid UserIdentifier { get; set; } // The UserIdentifier is used as a foreign key for the Person entity to link to this contact info.
+}
+````
+
+The Fluent API configuration commands, which use the alternate key in the `Person` entity class as a foreign key in the `ContactInfo` entity class.
+
+Here are a few notes on alternate keys:
+
+* You can have composite alternate keys, which are made up of two or more properties. You handle them in the same way that you do composite keys: by using an anonymous Type, such as `HasPrincipalKey<MyClass>(c => new {c.Part1, c.Part2}`).
+* Unique keys and alternate keys are different, and you should choose the correct one for your business case. Here are some of the differences:
+  * Unique keys ensure that each entry is unique; they can’t be used in a foreign key.
+  * Unique keys can be null, but alternate keys can’t.
+  * Unique key values can be updated, but alternate keys can’t.
+* You can define a property as a standalone alternate key by using the Fluent API command `modelBuilder.Entity<Car>().HasAlternateKey(c => c.LicensePlate)`, but you don’t need to do that, because using the `HasPrincipalKey` method to set up a relationship automatically registers the property as an alternate key.
+
+
+
+![](./diagrams/svg/08_07_has_principal_key.drawio.svg)
+
+
+
+#### Less-used options in Fluent API relationships
+
+**HASCONSTRAINTNAME: SETTING THE FOREIGN-KEY CONSTRAINT NAME**
+
+The method `HasConstraintName` allows you to set the name of the foreign-key constraint, which can be useful if you want to catch the exception on foreign-key errors and use the constraint name to form a more user-friendly error message.
+
+
+
+**METADATA: ACCESS TO THE RELATIONSHIP INFORMATION**
+
+The `MetaData` property provides access to the relationship data, some of which is read/write. Much of what the `MetaData` property exposes can be accessed via specific commands, such as `IsRequired`, but if you need something out of the ordinary, look through the various methods/properties supported by the `MetaData` property.
+
+
+
+### Alternative ways of mapping entities to database tables
+
+Sometimes, it’s useful to not have a one-to-one mapping from an entity class to a database table. Instead of having a relationship between two classes, you might want to combine both classes into one table. This approach allows you to load only part of the table when you use one of the entities, which will improve the query’s performance.
+
+This section describes five alternative ways to map classes to the database, each with advantages in certain situations:
+
+* *Owned types* - Allows a class to be merged into the entity class’s table and is useful for using normal classes to group data.
+* *Table per hierarchy (TPH)* - Allows a set of inherited classes to be saved in one table, such as classes called `Dog`, `Cat`, and `Rabbit` that inherit from the `Animal` class.
+* *Table per type (TPT)* - Maps each class to a different table. This approach works like TPH except that each class is mapped to a separate table.
+* *Table splitting* - Allows multiple entity classes to be mapped to the same table and is useful when some columns in a table are read more often than all the table columns.
+* *Property bags* - Allows you to create an entity class via a `Dictionary`, which gives you the option to create the mapping on startup. Property bags also use two other features: mapping the same type to multiple tables and using an indexer in your entity classes.
+
+
+
+#### Owned types: Adding a normal class into an entity class
+
