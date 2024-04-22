@@ -5924,3 +5924,394 @@ Renaming a property in an entity class, for example, by default causes that prop
 
 
 ### Understanding the complexities of changing your application’s database
+
+#### A view of what databases need updating
+
+![](./diagrams/images/09_01_db_usage_types.png)
+
+
+
+### Part 1: Introducing the three approaches to creating a migration
+
+![](./diagrams/images/09_02_migrations.png)
+
+
+
+### Creating a migration by using EF Core’s add migration command
+
+![](./diagrams/images/09_03_migration_command.png)
+
+
+
+A summary of the good, the bad, and the limitations of a standard migration created by the add migration command:
+
+* Good parts
+  * Builds a correct migration automatically
+  * Handles seeding of the database
+  * Doesn’t require knowledge of SQL
+  * Includes a remove migration feature
+* Bad parts
+  * Only works if your code is the source of truth
+* Limitations
+  * Standard EF Core migrations cannot handle breaking changes.
+  * Standard EF Core migrations are database-specific
+* Tips
+  * Watch out for error messages when you run the add migration command. If EF Core detects a change that could lose data, it outputs an error message but still creates the migration files. You must alter the migration script; otherwise, you will lose data.
+* Verdict
+  * This approach is an easy way to handle migrations, and it works well in many cases. Consider this approach first if your application code is driving the database design.
+
+
+
+#### Requirements before running any EF Core migration command
+
+There are two versions of the EF Core migration tools: the `dotnet-ef` command-line interface (CLI) tools and Visual Studio’s Package Manager Console (PMC) version.
+
+The following command will install the `dotnet-ef` tools globally so that you can use them in any directory:
+
+````powershell
+dotnet tool install --global dotnet-ef
+````
+
+
+
+To use Visual Studio’s PMC feature, you must include the NuGet package `Microsoft.EntityFrameworkCore.Tools` in your main application, and the correct EF Core database provider NuGet package, such as `Microsoft.EntityFrameworkCore.SqlServer`, in the project that holds the application’s DbContext you want to migrate.
+
+These tools must be able to create an instance of the DbContext you want to migrate. If your startup project is an ASP.NET Core web host or .NET Core generic host, the tools can use it to get an instance of a DbContext set up in the startup class.
+
+If you aren’t using ASP.NET Core, you can add a class that implements the `IDesignTimeDbContextFactory<TContext>` interface. This class must be in the same project as the DbContext you want to migrate.
+
+````c#
+// A class that provides an instance of the DbContext to the migration tools
+public class DesignTimeContextFactory // EF Core tools use this class to obtain an instance of the DbContext.
+    : IDesignTimeDbContextFactory<EfCoreContext> // This interface defines a way that the EF Core tools find and create this class.
+{
+    private const string connectionString = "Server=(localdb)\\mssqllocaldb;Database=...";
+
+    public EfCoreContext CreateDbContext(string[] args) // The interface requires this method, which returns a valid instance of the DbContext.
+    {
+        var optionsBuilder = new DbContextOptionsBuilder<EfCoreContext>();
+        optionsBuilder.UseSqlServer(connectionString);
+
+        return new EfCoreContext(optionsBuilder.Options); // Returns the DbContext for the EF Core tools to use
+    }
+}
+````
+
+
+
+#### Seeding your database via an EF Core migration
+
+You add seed data via Fluent API configuration, using the HasData method.
+
+````c#
+// An example of setting up seed data via the HasData Fluent API method
+protected override void OnModelCreating(ModelBuilder modelBuilder) // Seeding is configured via the Fluent API.
+{
+    // Adds two default projects. Note that you must provide the primary key.
+    modelBuilder.Entity<Project>().HasData(
+        new { ProjectId = 1, ProjectName = "Project1"},
+        new { ProjectId = 2, ProjectName = "Project2"});
+
+    // Each Project and a ProjectManager. Note that you set the foreign key of the project they are on.
+    modelBuilder.Entity<User>().HasData(
+        new { UserId = 1, Name = "Jill", ProjectId = 1 },
+        new { UserId = 2, Name = "Jack", ProjectId = 2 });
+
+    modelBuilder.Entity<User>()
+        .OwnsOne(x => x.Address).HasData( // // The User class has an owned type that holds the User’s address.
+        	new {UserId = 1, Street = "Street1", City = "city1"},
+        	new {UserId = 2, Street = "Street2", City = "city2"}); // Provide the user’s addresses. Note that you use the UserId to define which user you are adding data to.
+}
+````
+
+
+
+#### Handling EF Core migrations with multiple developers
+
+You will know if you have a migration merge conflict because your source control system will show a conflict in the migration snapshot file, which has the name `<DbContextClassName>ModelSnapShot`. If this conflict happens, here’s the recommended way to fix it:
+
+1. Abort the source control merge that contained a migration change that conflicted with your migration.
+
+2. Remove the migration you created by using either of the following commands
+   (Note: Keep the entity classes and configuration changes; you will need them later):
+
+   a. CLI - `dotnet ef migrations remove`
+   b. PMC - `Remove-Migration`
+
+3. Merge the incoming migration you abandoned in step 1. A merge conflict should no longer appear in the migration snapshot file.
+
+4. Use the `add migration` command to re-create your migration.
+
+That migration conflict resolution process works in most cases, but it can get complex. Recommendation for projects in which migration conflicts can happen are
+
+* Merge the main/production branch into your local version before you create a migration.
+* Have only one migration in a source control merge into your main/production branch, because undoing two migrations is hard work.
+* Tell your development team members if you think that your migration might affect their work.
+
+
+
+#### Using a custom migration table to allow multiple DbContexts to one database
+
+EF Core creates a table called `__EFMigrationsHistory`, if you apply an EF Core migration to a database. You can change the name via an option method called `MigrationsHistoryTable`.
+
+There aren’t many reasons for changing the migration history table, but sharing a database across multiple EF Core DbContexts is one of them.
+
+* Saving money by combining databases - You are building an application with individual user accounts that needs an accounts database. Your application’s DbContext also needs a database. By using a custom migration table on your application’s DbContext would allow both contexts to use the same database.
+* Using a separate DbContext for each business group.
+
+````c#
+// Changing the name of the migration history table for your DbContext
+services.AddDbContext<EfCoreContext>( // Registers your application’s DbContext as a service in ASP.NET Core
+    options => options.UseSqlServer(connection,
+        dbOptions => // The second parameter allows you to configure at the database provider level.
+	        dbOptions.MigrationsHistoryTable("NewHistoryName"))); // The MigrationsHistoryTable method allows you to change the migration table name and optionally the table’s schema.
+````
+
+````c#
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<Book>()
+        .ToTable("Books",
+                 t => t.ExcludeFromMigrations());
+}
+````
+
+
+
+### Editing an EF Core migration to handle complex situations
+
+EF Core can’t handle every possible database migration, such as a data-loss breaking change. Let’s look at the types of migrations that a standard migration can’t handle without help:
+
+* *Data-loss breaking changes*, such as moving columns from one table to a new table
+* *Adding SQL features that EF Core doesn’t create*, such as adding user-defined functions, SQL stored procedures, views, and so on
+* *Altering a migration to work for multiple database types*, such as handling both SQL Server and PostgreSQL
+
+You can fix these problems by editing the standard migration class created via the `add migration` command. To do this, you need to edit the migration class whose filename ends with the migration name and has a type of .cs, such as …_InitialMigration.cs.
+
+A summary of the good, the bad, and the limitations of a migration created by the add migration command edited by you to handle situations that the standard migration can’t handle on its own:
+
+* Good parts
+  * You start with most of the migration build via the `add migration` command.
+  * You can customize the migration.
+  * You can add SQL extra features, such as stored procedures.
+* Bad parts
+  * You need to know more about the database structure.
+  * Some edits require SQL skills.
+* Limitations
+  * Your edits aren’t checked by EF Core, so you could get a mismatch between the updated database and your entity classes and application’s DbContext.
+* Tips
+  * Same as for standard migrations
+* Verdict
+  * This approach is great for small alterations, but making big changes can be hard work, as you are often mixing C# commands with SQL. If you expect to be editing lots of your migrations to add SQL features, you should consider an SQL script approach as an alternative.
+
+
+
+#### Adding and removing MigrationBuilder methods inside the migration class
+
+If you change the name of a property in an entity class, which causes a data-loss breaking change. This problem can be fixed by removing two commands and replacing them with `MigrationBuilder`’s `RenameColumn` method inside the migration class.
+
+The standard migration sees this operation as being the removal of the `CustomerId` property and the addition of a new property called `UserId`, which would cause any existing values in the `CustomerId` column to be lost. To fix this problem, make the following changes:
+
+* Remove the `AddColumn` command that adds the new `UserId` column.
+* Remove the `DropColumn` command that removes the existing `CustomerId` column.
+* Add a `RenameColumn` command to rename the `CustomerId` column to `UserId`.
+
+````c#
+// The updated migration class with old commands replaced
+public partial class MyExample : Migration // Migration class created by the add migration command that has been edited
+{
+    protected override void Up(MigrationBuilder migrationBuilder) // There are two methods in a migration class. Up applied the migration, and another method called Down removed this migration.
+    {
+        // The command to add the new UserId column should not run, so you comment it out.
+        //migrationBuilder.AddColumn<Guid>(
+        //    name: "UserId",
+        //    table: "Orders",
+        //    type: "uniqueidentifier",
+        //    nullable: false,
+        //    defaultValue:
+        //    new Guid("00000000-0000-0000-0000-000000000000"));
+
+        // The command to remove the existing CustomerId column should not run, so you comment it out.
+        //migrationBuilder.DropColumn(
+        //    name: "CustomerId",
+        //    table: "Orders");
+
+        // The correct approach is to rename the CustomerId column to UserId.
+        migrationBuilder.RenameColumn(
+            name: "CustomerId",
+            table: "Orders",
+            newName: "UserId");
+        
+        //… rest of the migration code left out
+    }
+}
+````
+
+
+
+#### Adding SQL commands to a migration
+
+There can be two main reasons for adding SQL commands to a migration: to handle a data-loss breaking change and to add or alter parts of the SQL database that EF Core doesn’t control, such as adding views or SQL stored procedures.
+
+
+
+![](./diagrams/images/09_04_sql_to_migration.png)
+
+
+
+First, you change your `User` entity class to remove the address and link to the new `Address` entity class to the DbContext. Then you create a new migration by using the `add migration` command, which will warn you that it may result in the loss of data. At this point, you are ready to edit the migration.
+
+The second step is adding a series of SQL commands, using the `MigrationBuilder` method `Sql`, such as `migrationBuilder.Sql("ALTER TABLE…")`. The following listing shows you the SQL commands without the `migrationBuilder.Sql` so that they are easier to see.
+
+````sql
+// The SQL Server commands to copy over the addresses to a new table
+ALTER TABLE [Addresses]
+	ADD [UserId] [int] NOT NULL -- Adds a temporary column to allow the correct foreign key to be set in the Users table
+
+INSERT INTO [Addresses] ([UserId],[Street],[City])
+	SELECT [UserId],[Street],[City] FROM [Users] -- Copies over all the address data, with the User’s primary key, to the addresses table
+
+UPDATE [Users] SET [AddressId] = ( -- Sets the foreign key in the Users table back to the Addresses table
+	SELECT [AddressId] -- Uses the temporary UserId column to make sure that the right foreign keys are set up
+		FROM [Addresses]
+		WHERE [Addresses].[UserId] = [Users].[Userid])
+
+ALTER TABLE [Addresses]
+	DROP COLUMN [UserId] -- Removes the temporary UserId column in the Addresses table, as it’s not needed anymore
+````
+
+You add these SQL commands to the migration by using the `migrationBuilder.Sql` method for each SQL command, placing them after the Addresses table is created but before the foreign key is set up. Also, the `MigrationBuilder` methods that drop (remove) the address properties from the Users table must be moved to after the SQL code has run; otherwise, the data will have gone before your SQL can copy that data over.
+
+
+
+#### Adding your own custom migration commands
+
+If you often add certain types of SQL commands to a migration, you can build some templating code to make your edits easier to write:
+
+* Create extension methods that take the `MigrationBuilder` class in and build commands with `MigrationBuilder`’s Sql method. These extension methods tend to be database-specific.
+* A more complex but more versatile approach is to extend the `MigrationBuilder` class to add your own commands. This approach allows you to access methods to build commands that work for many database providers.
+
+
+
+````c#
+// Extension method to add/alter an SQL view in an EF Core migration
+public static class AddViewExtensions // An extension method must be in a static class.
+{
+    public static void AddViewViaSql<TView>( // The method needs the class that is mapped to the view so that it can get its properties.
+        this MigrationBuilder migrationBuilder, // The MigrationBuilder provides access to the migration methods-in this case, the Sql method.
+        string viewName,
+        string tableName, // The method needs the name to use for the view and the name of the table it is selecting from.
+        string whereSql) // Views have a Where clause that filters the results returned.
+        where TView : class // Ensures that the TView type is a class
+    {
+            // This method throws an exception if the database isn’t Server because it uses an SQL Server view format.
+            if (!migrationBuilder.IsSqlServer())
+            {
+                throw new NotImplementedException("warning…");
+            }
+
+            // Gets the names of the properties in the class mapped to the view and uses them as column names
+            var selectNamesString = string.Join(", ", typeof(TView).GetProperties().Select(x => x.Name));
+
+            // Creates the SQL command to create/update a view
+            var viewSql =
+                $"CREATE OR ALTER VIEW {viewName} AS " +
+                $"SELECT {selectNamesString} FROM {tableName} " +
+                $"WHERE {whereSql}";
+
+            migrationBuilder.Sql(viewSql); // Uses MigrationBuilder’s method to apply the created SQL to the database
+    }
+}
+````
+
+You would use this technique in a migration by adding it to the `Up` method (and a `DROP VIEW` command in the `Down` method to remove it).
+
+````c#
+migrationBuilder.AddViewViaSql<MyView>(
+    "EntityFilterView", "Entities",
+    "MyDateTime >= '2020-1-1'");
+````
+
+The resulting SQL looks like this snippet:
+
+````sql
+CREATE OR ALTER VIEW EntityFilterView AS
+SELECT MyString, MyDateTime
+FROM Entities
+WHERE MyDateTime >= '2020-1-1'
+````
+
+
+
+#### Altering a migration to work for multiple database types
+
+If you need to support migrations for two or more types of databases, the recommended way is to build separate migrations for each database provider.
+
+
+
+````c#
+// Two DbContexts that have the same entity classes and configuration
+public class MySqlServerDbContext : DbContext // Inherits the normal DbContext class
+{
+    public DbSet<Book> Books { get; set; }
+    // … other DbSets left out
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        //… your Fluent API code goes here
+    }
+}
+
+public class MySqliteDbContext : MySqlServerDbContext // The MySqliteDbContext inherits the Sql Server DbContext class instead of the normal DbContext.
+{
+    // The MySqliteDbContext inherits the DbSet properties and Fluent APIs from the Sql Server DbContext.
+}
+````
+
+The next step is creating a way for the migration tools to access each DbContext with the database provider defined. The cleanest way is to create an `IDesignTimeDbContextFactory<TContext>` class. Alternatively, you can override the `OnConfiguring` method in each DbContext to define the database provider.
+
+````c#
+services.AddDbContext<MySqlServerDbContext>(
+    options => options.UseSqlServer(connection,
+		x => x.MigrationsAssembly("Database.SqlServer")));
+````
+
+
+
+### Using SQL scripts to build migrations
+
+Change scripts contain SQL commands that update the schema of your database. This approach to handling database schema updates is more traditional and gives you much better control of the database features and the schema update. Tools can generate these migration scripts for you by comparing databases.
+
+As with the migrations that EF Core can create, your aim is to create a migration that will alter the schema of your database to match the EF Core’s internal model of the database.
+
+* Using SQL database comparison tools to produce migration from the current database schema to the desired database schema
+* Handcoding a change script to migrate the database
+
+Although option 1 should produce an exact match to EF Core’s internal model of the database, option 2 relies on the developer to write the correct SQL to match what EF Core needs. If the developer makes a mistake (which I can testify is easy to do), your application may fail with an exception; worse, it may silently lose data.
+
+
+
+#### Using SQL database comparison tools to produce migration
+
+A summary of the good, the bad, and the limitations of using an SQL database comparison tool to build SQL change scripts to migrate a database:
+
+* Good parts
+  * Tools build the correct SQL migration script for you.
+* Bad parts
+  * You need some understanding of databases and SQL.
+  * SQL comparison tools often output every setting under the sun to make sure that they get everything right, which makes the SQL code output hard to understand.
+  * Not all SQL comparison tools produce a migration remove script.
+* Limitations
+  * Tools do not handle breaking changes, so they need human input.
+* Tips
+  * You can use this approach only for complex/large migrations, and I strip out any extra settings to make the code easier to work with.
+* Verdict
+  * This approach is useful and especially good for people who aren’t comfortable with the SQL language. It’s also useful for people who have written their own SQL migration code and want to check that their code is correct.
+
+
+
+![](./diagrams/images/09_05_sql_database_comparison.png)
+
+
+
+#### Handcoding SQL change scripts to migrate the database
