@@ -6639,3 +6639,351 @@ Here is a detailed breakdown of these stages:
 * Configuring columns to have default values or computed values
 * Configuring SQL column properties on databases not created by EF Core
 * Handling concurrency conflicts
+
+
+
+### DbFunction: Using user-defined functions (UDFs) with EF Core
+
+SQL has a feature called UDFs that allows you to write SQL code that will be run in the database server. UDFs are useful because you can move a calculation from your software into the database, which can be more efficient because it can access the database directly. UDFs can return a single result, which is referred to as *scalar-valued function*, and one that can return multiple data in a result, known as a *table-valued function*. UDFs differ from SQL *stored procedures* (StoredProc) in that UDFs can only query a database, whereas a StoredProc can change the database.
+
+Configuration:
+
+1. Define a method that has the correct name, input parameters, and output type that matches the definition of your UDF. This method acts as a reference to your UDF.
+2. Declare the method in the application’s DbContext or (optionally) in a separate class if it’s a scalar UDF.
+3. Add the EF Core configuration commands to map your static UDF reference method to a call to your UDF code in the database.
+
+Database setup:
+
+4. Manually add your UDF code to the database by using some form of SQL command.
+
+Use:
+
+5. Now you can use the static UDF reference in a query. EF Core will convert that method to a call to your UDF code in the database.
+
+
+
+#### Configuring a scalar-valued UDF
+
+The configuration for a scalar-valued UDF consists of defining a method to represent your UDF and then registering that method with EF Core at configuration time. You’re going to produce a UDF called `AverageVotes` that works out the average review votes for a book. `AverageVotes` takes in the primary key of the book you want to calculate for and returns a nullable double value - `null` if no reviews exist or the average value of the review votes if there are reviews.
+
+You can define the UDF representation as a static or nonstatic method. Nonstatic definitions need to be defined in your application’s DBContext; the static version can be placed in a separate class.
+
+
+
+![](./diagrams/images/10_01_scalar_valued_udf.png)
+
+
+
+The UDF representation method is used to define the signature of the UDF in the database: it will never be called as a NET method.
+
+You can register your static UDF representation method with EF Core by using either of the following:
+
+* `DbFunction` attribute
+* Fluent API
+
+You can use the `DbFunction` attribute if you place the method representing the UDF inside your application’s DbContext.
+
+````c#
+// Using a DbFunction attribute with a static method inside DbContext
+public class MyEfCoreContext : DbContext
+{
+    public DbSet<Book> Books { get; set; }
+    //… other code removed for clarity
+
+    public Chapter08EfCoreContext(
+        DbContextOptions<MyEfCoreContext> options)
+        : base(options) {}
+
+    [DbFunction] // The DbFunction attribute defines the method as being a representation of your UDF.
+    public static double? AverageVotes(int id) // The return value, the method name, and the number, type, and order of the method parameters must match your UDF code.
+    {
+        return null; // The method is never called, but you need the right type for the code to compile.
+    }
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        // If you use the DbFunction attribute, you don’t need any Fluent API to register the static method.
+        //… no Fluent API needed
+    }
+}
+````
+
+
+
+The other approach is to use the Fluent API to register the method as a UDF representation. The advantage of this approach is that you can place the method in any class, which makes sense if you have a lot of UDFs.
+
+
+
+````c#
+// Registering your static method representing your UDF using Fluent API
+protected override void OnModelCreating(ModelBuilder modelBuilder) // Fluent API is placed inside the OnModelCreating method inside your application’s DbContext.
+{
+    //… other configuration removed for clarity
+
+    modelBuilder.HasDbFunction( // HasDbFunction will register your method as the way to access your UDF.
+        () => MyUdfMethods.AverageVotes(default(int))) // Adds a call to your static method representation of your UDF code
+        .HasSchema("dbo"); // You can add options. Here, you add HasSchema (not needed in this case); other options include HasName.
+}
+````
+
+
+
+#### Configuring a table-valued UDF
+
+Allow you to return multiple values in the same way that querying a table returns multiple values. The difference from querying a normal table is that the table-valued UDF can execute SQL code inside the database, using the parameters you provide to the UDF.
+
+The table UDF example returns three values: the `Book`’s `Title`, the number of `Reviews`, and the average `Review Votes` for the `Book`. This example needs a class to be defined that will accept the three values coming back from the table-valued UDF, as shown in the following code snippet:
+
+````c#
+public class TableFunctionOutput
+{
+    public string Title { get; set; }
+    public int ReviewsCount { get; set; }
+    public double? AverageVotes { get; set; }
+}
+````
+
+
+
+Unlike a scalar UDF, a table UDF can be defined in only one way - within your application’s DbContext - because it needs access to a method inside the `DbContext` class called `FromExpression`. What you are doing is defining the name and signature of the table-valued UDF: the name, the return type, and the parameters’ type all must match your UTF.
+
+
+
+````c#
+// Defining a table-valued UDF within your application’s DbContext
+public class MyEfCoreContext : DbContext
+{
+    public DbSet<Book> Books { get; set; }
+    //… other code removed for clarity
+
+    public Chapter10EfCoreContext(
+        DbContextOptions<MyEfCoreContext> options)
+        : base(options) {}
+
+    public IQueryable<TableFunctionOutput> GetBookTitleAndReviewsFiltered(int minReviews) // The return value, the method name, and the parameters type must match your UDF code.
+    {
+        return FromExpression(() => // The FromExpression will provide the IQueryable result.
+                              GetBookTitleAndReviewsFiltered(minReviews)); // You place the signature of the method within the FromExpression parameter.
+    }
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<TableFunctionOutput>()
+            .HasNoKey(); // You must configure the TableFunctionOutput class as not having a primary key.
+        modelBuilder.HasDbFunction(() => GetBookTitleAndReviewsFiltered(default(int))); // You register your UDF method by using the Fluent API.
+        //… other configurations left out
+    }
+}
+````
+
+EF Core will replace the inner method call with a call to your UDF when you use it in a query.
+
+
+
+#### Adding your UDF code to the database
+
+Before you can use the UDF you’ve configured, you need to get your UDF code into the database. A UDF normally is a set of SQL commands that run on the database, so you need to add your UDF code to the database manually before you call the UDF.
+
+The first way is by adding a UDF by using EF Core’s migration feature. To do this, you use the `migrationBuilder.Sql` method.
+
+Another approach is to add a UDF by using EF Core’s `ExecuteSqlRaw` or `ExecuteSqlInterpolated` method. This approach is more applicable to unit testing than to production use where you aren’t using migrations to create your database, in which case you must add the UDFs manually.
+
+
+
+````c#
+// Adding your UDF to the database via the ExecuteSqlRaw method
+public const string UdfAverageVotes = nameof(MyUdfMethods.AverageVotes); // Captures the name of the static method that represents your UDF and uses it as the name of the UDF you add to the database
+
+context.Database.ExecuteSqlRaw( // Uses EF Core’s ExecuteSqlRaw method to add the UDF to the database
+    $"CREATE FUNCTION {UdfAverageVotes} (@bookId int)" + // The SQL code that follows adds a UDF to an SQL server database.
+    @" RETURNS float
+    AS
+    BEGIN
+    DECLARE @result AS float
+    SELECT @result = AVG(CAST([NumStars] AS float))
+    	FROM dbo.Review AS r
+		WHERE @bookId = r.BookId
+	RETURN @result
+	END");
+````
+
+
+
+#### Using a registered UDF in your database queries
+
+You can use this method as a return variable or as part of the query filter or sorting. The following listing has a query that includes a call to a scalar-values UDF that returns information about a book, including the average review votes.
+
+````c#
+// Using a scalar-valued UDF in a EF Core query
+var bookAndVotes = context.Books.Select(x => new Dto // A normal EF Core query on the Books table
+{
+    BookId = x.BookId,
+    Title = x.Title,
+    AveVotes = MyUdfMethods.AverageVotes(x.BookId) // Calls your scalar valued UDF by using its representing method
+}).ToList();
+````
+
+````sql
+SELECT [b].[BookId], [b].[Title],
+[dbo].AverageVotes([b].[BookId]) AS [AveVotes]
+FROM [Books] AS [b]
+````
+
+
+
+A table-valued UDF requires a class to return the multiple values. The following code snippet shows a call to our `GetBookTitleAndReviewsFiltered` table-valued UDF:
+
+````c#
+var result = context.GetBookTitleAndReviewsFiltered(4)
+    .ToList()
+````
+
+
+
+Scalar and table UDFs can also be used in any part of an EF Core query, as return values or for sorting or filtering. Here’s another example, in which your scalar-valued UDF returns only books whose average review is 2.5 or better:
+
+````c#
+var books = context.Books
+    .Where(x => MyUdfMethods.AverageVotes(x.BookId) >= 2.5)
+    .ToList();
+````
+
+
+
+### Computed column: A dynamically calculated column value
+
+The main reason for using computed columns is to move some of the calculation - such as some string concatenations - into the database to improve performance. Another good use of computed columns is to return a useful value based on other columns in the row. An SQL computed column containing `[TotalPrice] AS (NumBook * BookPrice)`, for example, would return the total price for that order.
+
+A *computed column* is a column in a table whose value is calculated by using other columns in the same row and/or an SQL built-in function. You can also call systems or UDFs with columns as parameters.
+
+There are two versions of SQL *computed columns*:
+
+* One that does the calculation every time the column is read. This type is a called *dynamic computed column*.
+* One that does the calculation only when the entity is updated. This type is a called *persisted computed column* or *stored generated column*. Not all databases support persisted computed columns.
+
+As an example of both types of SQL computed columns, you’ll use a dynamic computed column to get only the year of the person’s birth from a backing field that holds the date of birth.
+
+The second example of SQL computed columns is a persisted computed column that fixes the problem of not using lambda properties in entity classes. In that example, you had a `FullName` property, which was formed by combining the `FirstName` and `LastName` properties, but you couldn’t use a lambda property, as EF Core can’t filter/order on a lambda property. When you use a persisted computed column, however, the computed column is updated whenever the row is updated, and you can use the `FullName` column in any filter, order, search, and similar operation. You declare the properties in the normal way in the class, as shown in the following listing, but because the computed columns are read-only, you make the setter private.
+
+````c#
+// Person entity class with two computed column properties
+public class Person
+{
+    public int PersonId { get; set; }
+    public int YearOfBirth { get; private set; }
+
+    [MaxLength(50)]
+    public string FirstName { get; set; }
+    [MaxLength(50)]
+    public string LastName { get; set; }
+    [MaxLength(101)]
+    public string FullName { get; private set; }
+    
+    //other properties/methods left out…
+}
+````
+
+Then you need to configure the two computed columns and the index. The only way to configure columns is to use the Fluent API. This listing shows the various configurations for the `Person` entity class.
+
+````c#
+// Configuring two computed columns, one persistent, and an index
+public class PersonConfig : IEntityTypeConfiguration<Person>
+{
+    public void Configure(EntityTypeBuilder<Person> entity)
+    {
+        entity.Property<DateTime>("_dateOfBirth")
+            .HasColumnName("DateOfBirth"); // Configures the backing field, with the column name DateOfBirth
+
+        entity.Property(p => p.YearOfBirth)
+            .HasComputedColumnSql(
+            	"DatePart(yyyy, [DateOfBirth])");
+
+        entity.Property(p => p.FullName)
+            .HasComputedColumnSql(
+            	"[FirstName] + ' ' + [LastName]",
+            	stored:true); // Makes this computed column a persisted computed column
+        
+        entity.HasIndex(x => x.FullName); // Adds an index to the FullName column because you want to filter/sort on that column
+    }
+}
+````
+
+
+
+![](./diagrams/images/10_02_computed_column.png)
+
+
+
+The dynamic computed column is recalculated on each read: for simple calculations, the compute time will be minimal, but if you call a UDF that accesses the database, the time taken to read the data from the database can increase. Using a persisted computed column overcomes this problem. Both types of computed columns can have an index in some database types, but each database type has limitations and restrictions. SQL Server doesn’t allow an index on computed columns whose value came from a date function, for example.
+
+
+
+### Setting a default value for a database column
+
+When you first create a .NET type, it has a default value: `0` for an `int`, `null` for a `string`, and so on. Sometimes, it’s useful to set a different default value for a property.
+
+
+
+````c#
+public string Answer { get; set; } = "not given";
+````
+
+
+
+But with EF Core, you have two other ways to set a default value. First, you can configure EF Core to set up a default value within the database by using the `HasDefaultValue` Fluent API method. This method changes the SQL code used to create the table in the database and adds an SQL `DEFAULT` command containing your default value for that column if no value is provided. Generally, this approach is useful if rows are added to your database via raw SQL commands, as raw SQL often relies on the SQL `DEFAULT` command for columns that the SQL `INSERT` doesn’t provide values for.
+
+
+
+The second approach is to create your own code that will create a default value for a column if no value is provided. This approach requires you to write a class that inherits the `ValueGenerator` class, which will calculate a default value. Then you have to configure the property or properties to use your `ValueGenerator` class via the `Configure` Fluent API method. This approach is useful when you have a common format for certain type of values, such as creating a unique string for a user’s order of books.
+
+Before exploring each approach, let’s define a few things that EF Core’s default value-setting methods have in common:
+
+* Defaults can be applied to properties, backing fields, and shadow properties. We’ll use the generic term *column* to cover all three types, because they all end up being applied to a column in the database.
+* Default values (`int`, `string`, `DateTime`, `GUID`, and so on) apply only to scalar (nonrelational) columns.
+* EF Core will provide a default value only if the property contains the CLR default value appropriate to its type. If a property of type `int` has the value `0`, for example, it’s a candidate for some form of provided default value, but if the property’s value isn’t `0`, that nonzero value will be used.
+* EF Core’s default value methods work at the entity-instance level, not the class level. The defaults won’t be applied until you’ve called `SaveChanges` or (in the case of the value generator) when you use the `Add` command to add the entity.
+
+Default values happen only on new rows added to the database, not to updates. You can configure EF Core to add a default value in three ways:
+
+* Using the `HasDefaultValue` method to add a constant value for a column
+* Using the `HasDefaultValueSql` method to add an SQL command for a column
+* Using the `HasValueGenerator` method to assign a value generator to a property
+
+
+
+#### Using the HasDefaultValue method to add a constant value for a column
+
+The first approach tells EF Core to add the SQL DEFAULT command to a column when it creates a database migration, providing a simple constant to be set on a column if a new row is created and the property mapped to that column has a default value. You can add the SQL `DEFAULT` command to a column only via a Fluent API method called `HasDefaultValue`. The following code sets a default date of 1 January 2000 to the column `DateOfBirth` in the SQL table called People.
+
+````c#
+// Configuring a property to have a default value set inside the SQL database
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<DefaultTest>()
+        .Property("DateOfBirth")
+        .HasDefaultValue(new DateTime(2000,1,1));
+    //… other configurations left out
+}
+````
+
+If the SQL code that EF Core produces is asked to create/migrate an SQL Server database, it looks like the following SQL snippet, with the default constraint in bold:
+
+````sql
+CREATE TABLE [Defaults] (
+    [Id] int NOT NULL IDENTITY,
+    -- other columns left out
+    [DateOfBirth] datetime2 NOT NULL
+    	DEFAULT '2000-01-01T00:00:00.000',
+    CONSTRAINT [PK_Defaults] PRIMARY KEY ([Id])
+);
+````
+
+
+
+If the column in a new entity has the CLR default value, EF Core doesn’t provide a value for that column in the SQL `INSERT`, which means that the database server will apply the default constraint of the column definition to provide a value to insert into the new row.
+
+If you are working with a database not created by EF Core, you still need to register the configuration because EF Core must not set that column if the value in the related property contains the CLR default value for that type.
+
+
+
+#### Using the HasDefaultValueSql method to add an SQL command for a column
