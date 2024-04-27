@@ -6987,3 +6987,613 @@ If you are working with a database not created by EF Core, you still need to reg
 
 
 #### Using the HasDefaultValueSql method to add an SQL command for a column
+
+In some situations, it’s useful to get the time when a row is added to the database. In such a case, instead of providing a constant in the SQL `DEFAULT` command, you can provide an SQL function that will provide a dynamic value when the row is added to the database. SQL Server, for example, has two functions - `getdate` and `getutcdate` - that provide the current local datatime and the UTC datatime, respectively.
+
+
+
+````c#
+protected override void
+OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<DefaultTest>()
+        .Property(x => x.CreatedOn)
+        .HasDefaultValueSql("getutcdate()");
+    …
+}
+````
+
+
+
+If you want to use this column to track when the row was added, you need to make sure that the .NET property isn’t set by code (remains at the default value). You do this by using a property with a private setter.
+
+
+
+````c#
+public DateTime CreatedOn { get; private set; }
+````
+
+
+
+#### Using the HasValueGenerator method to assign a value generator to a property
+
+The third approach to adding a default value is executed inside your EF Core code. EF Core allows the class that inherits from the class `ValueGenerator` or `ValueGenerator<T>` to be configured as a value generator for a property or backing field.
+
+* The entity’s `State` is set to Added; the entity is deemed to be a new entity to be added to the database.
+* The property hasn’t already been set; its value is at the .NET type’s default value.
+
+
+
+````c#
+// A value generator that produces a unique string for the OrderId
+public class OrderIdValueGenerator : ValueGenerator<string> // The value generator needs to inherit from EF Core’s ValueGenerator<T>.
+{
+    public override bool GeneratesTemporaryValues => false; // Set this to false if you want your value to be written to the database.
+
+    public override string Next(EntityEntry entry) // This method is called when you Add the entity to the DbContext.
+    {
+        var name = entry // The parameter gives you access to the entity that the value generator is creating a value for. You can access its properties.
+            .Property(nameof(DefaultTest.Name)) // Selects the property called "Name" and gets its current value
+            .CurrentValue;
+        var ticks = DateTime.UtcNow.ToString("s"); // Provides the date in sortable format
+        var guidString = Guid.NewGuid().ToString(); // Provides a unique string
+        var orderId = $"{name}-{ticks}-{guidString}"; // The orderId combines these three parts to create a unique orderId containing useful info.
+        return orderId; // The method must return a value of the Type you have defined at T in the inherited ValueGenerator<T>.
+    }
+}
+````
+
+The following code configures the use of a value generator:
+
+````c#
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<DefaultTest>()
+        .Property(p => p.OrderId)
+        .HasValueGenerator((p, e) => new OrderIdValueGenerator());
+    …
+}
+````
+
+
+
+The value generator’s `Next` method is called when you `Add` the entity via `context.Add(newEntity)` but before the data is written to the database. Any database-provided values, such as the primary key using SQL `IDENTITY`, won’t be set when the `Next` method is called.
+
+The value generator is a specialized feature with limited applications.
+
+
+
+### Sequences: Providing numbers in a strict order
+
+Sequences in a database enable you to produce numbers in strict order with no gaps, such as 1,2,3,4. Key values created by the SQL `IDENTITY` command aren’t guaranteed to be in sequence; they might be like this: 1,2,10,11. Sequences are useful when you want a guaranteed known sequence, such as for an order number for purchases.
+
+The way that sequences are implemented differs among database servers, but in general, a sequence is assigned not to a specific table or column, but to a schema. Every time a column wants a value from the sequence, it asks for that value. EF Core can set up a sequence and then, by using the `HasDefaultValueSql` method, set the value of a column to the next value in the sequence.
+
+
+
+````c#
+// The DbContext with the Fluent API configuration and the Order class
+class MyContext : DbContext
+{
+    public DbSet<Order> Orders { get; set; }
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.HasSequence<int>("OrderNumbers", "shared") // Creates an SQL sequence OrderNumber in the schema "shared." If no schema is provided, it uses the default schema.
+            .StartsAt(1000)
+            .IncrementsBy(5); // (Optional) Allows you to control the sequence’s start and increments. The default is to start at 1 and increment by 1.
+
+        modelBuilder.Entity<Order>()
+            .Property(o => o.OrderNo)
+            .HasDefaultValueSql("NEXT VALUE FOR shared.OrderNumbers"); // A column can access the sequence number via a default constraint. Each time the NEXT VALUE command is called, the sequence is incremented.
+    }
+}
+
+public class Order
+{
+    public int OrderId { get; set; }
+    public int OrderNo { get; set; }
+}
+````
+
+
+
+### Marking database-generated properties
+
+When working with an existing database, you may need to tell EF Core about specific columns that are handled differently from what EF Core expects. If your existing database has a computed column that you didn’t set up by using EF Core’s Fluent API, EF Core needs to be told that the column is computed so that it handles the column properly.
+
+You don’t need any of the features in this section if you use EF Core to do the following:
+
+* Create or migrate the database via EF Core.
+* Reverse-engineer your database. (EF Core reads your database schema and generates your entity classes and application DbContext.)
+
+You might use these features if you want to use EF Core with an existing database without reverse engineering. In that case, you need to tell EF Core about columns that don’t conform to its normal conventions. The following sections teach you how to mark three different types of columns:
+
+* Columns that change on inserting a new row or updating a row
+* Columns that change on inserting a new row
+* "Normal" columns - that is, columns that are changed only by EF Core
+
+
+
+#### Marking a column that’s generated on an addition or update
+
+EF Core needs to know whether a column’s value is generated by the database, such as a computed column, if for no other reason than it’s read-only. EF Core can’t "guess" that the database sets a column’s value, so you need to mark it as such. You can use Data Annotations or the Fluent API.
+
+The Data Annotation for an add-or-update column is shown in the following code snippet. Here, EF Core is using the existing `DatabaseGeneratedOption.Computed` setting. The setting is called `Computed` because that’s the most likely reason for a column to be changed on add or update:
+
+````c#
+public class PersonWithAddUpdateAttibutes
+{
+    …
+    [DatabaseGenerated(DatabaseGeneratedOption.Computed)]
+    public int YearOfBirth { get; set; }
+}
+````
+
+This code snippet uses the Fluent API to set the add-or-update setting for the column:
+
+````c#
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<Person>()
+        .Property(p => p.YearOfBirth)
+        .ValueGeneratedOnAddOrUpdate();
+    …
+}
+````
+
+
+
+#### Marking a column’s value as set on insert of a new row
+
+You can tell EF Core that a column in the database will receive a value via the database whenever a new row is inserted to the database.
+
+* Via an SQL `DEFAULT` command, which provides a default value if no value is given in the `INSERT` command.
+* By means of some form of key generation, of which SQL’s `IDENTITY` command is the primary method. In these cases, the database creates a unique value to place in the column when a new row is inserted.
+
+If a column has the SQL `DEFAULT` command on it, it will set the value if EF Core creates a new row and no value was provided with a value. In that case, EF Core must read back the value that the SQL `DEFAULT` command set for the column; otherwise, the data inside your entity class will not match the database.
+
+The other situation in which EF Core needs to read back the value of a column is for a primary-key column when the database provides the key value, because EF Core won’t know that the key was generated by SQL’s `IDENTITY` command.
+
+````c#
+public class MyClass
+{
+    public int MyClassId { get; set;}
+    …
+    [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
+    public int SecondaryKey { get; set;}
+}
+````
+
+The second example does the same thing but uses the Fluent API. For this example, you have a column with a default constraint:
+
+````c#
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<Person>()
+        .Property("DateOfBirth")
+        .ValueGeneratedOnAdd();
+    …
+}
+````
+
+
+
+#### Marking a column/property as "normal"
+
+All scalar properties that aren’t keys, don’t have an SQL default value, and aren’t computed columns are normal - that is, only you set the value of the property. In rare cases, you may want to set a property to be normal, and EF Core provides ways to do that. The one case in which this approach might be useful is for a primary key that uses a GUID; in that case, your software supplies the value.
+
+
+
+````c#
+public class MyClass
+{
+    [DatabaseGenerated(DatabaseGeneratedOption.None)]
+    public Guid MyClassId { get; set;}
+    …
+}
+````
+
+You can also use the following Fluent API configuration:
+
+````c#
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder.Entity<MyClass>()
+        .Property("MyClassId")
+        .ValueGeneratedNever();
+    …
+}
+````
+
+
+
+### Handling simultaneous updates: Concurrency conflicts
+
+By default, EF Core uses an Optimistic Concurrency pattern.
+
+
+
+![](./diagrams/images/10_03_optimistic_concurrency.png)
+
+
+
+#### Why do concurrency conflicts matter?
+
+In some cases, concurrent conflicts do matter. In financial transactions, for example, you can imagine that the purity and auditing of data are going to be important, so you might want to guard against concurrency changes.
+
+When concurrent conflicts are issues, and you can’t design around them, EF Core provides two ways of detecting a concurrent update and, when the update is detected, a way of getting at all the relevant data so you can implement code to fix the issue.
+
+
+
+#### EF Core’s concurrency conflict–handling features
+
+EF Core’s concurrency conflict-handling features can detect a concurrency update in two ways, activated by adding one of the following to an entity class:
+
+* A *concurrency token* to mark a specific property/column in your entity class as one to check for a concurrency conflict
+* A *timestamp* (also known as a rowversion), which marks a whole entity class/row as one to check for a concurrency conflict
+
+In both cases, when `SaveChanges` is called, EF Core produces database server code to check for updates of any entities that contain concurrency tokens or timestamps. If that code detects that the concurrency tokens or timestamps have changed since it read the entity, it throws a `DbUpdateConcurrencyException` exception. At that point, you can use EF Core’s features to inspect the differing versions of the data and apply your custom code to decide which of the concurrent updates wins.
+
+
+
+**DETECTING A CONCURRENT CHANGE VIA CONCURRENCY TOKEN**
+
+The concurrency-token approach allows you to configure one or more properties as concurrency tokens. This approach tells EF Core to check whether the current database value is the same as the value found when the tracked entity was loaded as part of the SQL `UPDATE` command sent to the database. That way, the update will fail if the loaded value and the current database value are different.
+
+
+
+![](./diagrams/images/10_04_concurrency_token.png)
+
+
+
+````c#
+// The ConcurrencyBook entity class, with a PublishedOn property
+public class ConcurrencyBook
+{
+    public int ConcurrencyBookId { get; set; }
+    public string Title { get; set; }
+
+    [ConcurrencyCheck] // Tells EF Core that the PublishedOn property is a concurrency token, which means that EF Core will check whether it has changed when you update it
+    public DateTime PublishedOn { get; set; }
+
+    public ConcurrencyAuthor Author { get; set; }
+}
+````
+
+Alternatively, you can define a concurrency token via the Fluent API:
+
+````c#
+// Setting a property as a concurrency token by using the Fluent API
+protected override void OnModelCreating(ModelBuilder modelBuilder) // The OnModelCreating method is where you place the configuration of the concurrency detection.
+{
+    modelBuilder.Entity<ConcurrencyBook>()
+        .Property(p => p.PublishedOn)
+        .IsConcurrencyToken(); // Defines the PublishedOn property as a concurrency token, which means that EF Core checks whether it has changed when writing out an update
+
+    //… other configuration removed
+}
+````
+
+
+
+````c#
+// Simulating a concurrent update of the PublishedOn column
+var firstBook = context.Books.First(); // Loads the first book in the database as a tracked entity
+
+context.Database.ExecuteSqlRaw(
+    "UPDATE dbo.Books SET PublishedOn = GETDATE()" +
+    " WHERE ConcurrencyBookId = @p0",
+    firstBook.ConcurrencyBookId); // Simulates another thread/application, changing the PublishedOn column of the same book
+firstBook.Title = Guid.NewGuid().ToString(); // Changes the title in the book to cause EF Core to update the book
+context.SaveChanges(); // This SaveChanges throws a DbUpdateConcurrencyException.
+````
+
+The important thing to note is that only the property marked as a concurrency token is checked. If your SQL-simulated update changed, say, the Title property, which isn’t marked as a concurrency token, no exception would be thrown.
+
+You can see this effect in the SQL that EF Core produces to update the Title in the next listing. The SQL WHERE clause contains not only the primary key of the book to update, but also the PublishedOn column.
+
+````sql
+-- SQL code to update Book where PublishedOn is a concurrency token
+SET NOCOUNT ON;
+UPDATE [Books] SET [Title] = @p0
+WHERE [ConcurrencyBookId] = @p1
+	AND [PublishedOn] = @p2; -- The test fails if the PublishedOn column has changed, which stops the update.
+SELECT @@ROWCOUNT; -- Returns the number of rows updated by this SQL command
+````
+
+When EF Core runs this SQL command, the `WHERE` clause finds a valid row to update only if the PublishedOn column hasn’t changed from the value EF Core read in from the database. Then EF Core checks the number of rows that have been updated by the SQL command. If the number of rows updated is zero, EF Core raises `DbUpdateConcurrencyException` to say that a concurrency conflict exists; it can catch a concurrency conflict caused by another task by changing the PublishedOn column or deleting the row when this task does an update.
+
+The good thing about using a concurrency token is that it works on any database because it uses basic commands.
+
+
+
+**DETECTING A CONCURRENT CHANGE VIA TIMESTAMP**
+
+The second way to check for concurrency conflicts is to use what EF Core calls a timestamp. A timestamp works differently from a concurrency token, as it uses a unique value provided by the database server that changes whenever a row is inserted or updated. The whole entity, rather than specific properties or columns, is protected against concurrency changes.
+When a row with a property/column marked as a timestamp is inserted or updated, the database server produces a new, unique value for that column, which has the effect of detecting an update to an entity/row whenever `SaveChanges` is called.
+
+The timestamp database type is database-type-specific.
+
+
+
+
+![](./diagrams/images/10_05_concurrent_change_via_timestamp.png)
+
+
+
+The following listing adds a `ChangeCheck` property, which watches for any updates to the whole entity, to an entity class called `ConcurrencyAuthor`. In this case, the `ChangeCheck` property has a `Timestamp` Data Annotation, which tells EF Core to mark it as a special column that the database will update with a unique value.
+
+In the case of SQL Server, the database provider will set the column as an SQL Server `rowversion`; other databases have different approaches to implementing the `TimeStamp` column.
+
+````c#
+// The ConcurrencyAuthor class, with the ChangeCheck property
+public class ConcurrencyAuthor
+{
+    public int ConcurrencyAuthorId { get; set; }
+    public string Name { get; set; }
+    [Timestamp] // Marks the ChangeCheck property as a timestamp, causing the database server to mark it as an SQL ROWVERSION. EF Core checks this property when updating to see whether it has changed.
+    public byte[] ChangeCheck { get; set; }
+}
+````
+
+Alternatively, you can use the Fluent API to configure a timestamp, as shown in the following listing:
+
+````c#
+// Configuring a timestamp by using the Fluent API
+protected override void OnModelCreating(ModelBuilder modelBuilder) // OnModelCreating is where you place the configuration of the concurrency detection.
+{
+    modelBuilder.Entity<ConcurrencyAuthor>()
+        .Property(p => p.ChangeCheck)
+        .IsRowVersion(); // Defines an extra property called ChangeCheck that will be changed every time the row is created/updated. EF Core checks whether this property has changed when it does an update.
+}
+````
+
+Both configurations create a column in a table that the database server will change automatically whenever there’s an `INSERT` or `UPDATE` to that table. For SQL Server database, the column type is set to `ROWVERSION`, as shown in the following listing. Other database servers can use different approaches, but they all provide a new, unique value on an `INSERT` or `UPDATE`.
+
+````sql
+-- The SQL to create the Authors table, with a timestamp column
+CREATE TABLE [dbo].[Authors] (
+    [ConcurrencyAuthorId] INT IDENTITY (1, 1),
+    [ChangeCheck] TIMESTAMP NULL, -- If the table is created by EF Core, sets the column type to TIMESTAMP if your property is of type byte[]. This column’s value will be updated on each INSERT or UPDATE.
+    [Name] NVARCHAR (MAX) NULL
+);
+````
+
+
+
+You simulate a concurrent change, which consists of three steps:
+
+1. You use EF Core to read in the Authors row that you want to update.
+2. You use an SQL command to update the Authors table, simulating another task updating the same Author that you read in. EF Core doesn’t know anything about this change because raw SQL bypasses EF Core’s tracking snapshot feature.
+3. In the last two lines, you update the Author’s name and call `SaveChanges`, which causes a `DbUpdateConcurrencyException` to be thrown because EF Core found that the ChangeCheck column has changed from step 1.
+
+````c#
+// Simulating a concurrent update of the ConcurrentAuthor entity
+var firstAuthor = context.Authors.First(); // Loads the first author in the database as a tracked entity
+context.Database.ExecuteSqlRaw(
+    "UPDATE dbo.Authors SET Name = @p0" +
+    " WHERE ConcurrencyAuthorId = @p1",
+    firstAuthor.Name,
+    firstAuthor.ConcurrencyAuthorId); // Simulates another thread/application updating the entity. Nothing is changed except the timestamp.
+firstAuthor.Name = "Concurrency Name"; // Changes something in the author to cause EF Core to do an update to the book
+context.SaveChanges(); // Throws DbUpdateConcurrencyException
+````
+
+This code is like the case in which you used a concurrency token. The difference is that the timestamp detects an update of the row via the unique value in the property/ column called `ChangeCheck`. You can see this difference in the following listing, which shows the SQL that EF Core produces to update the row with the check on the timestamp property, `ChangeCheck`.
+
+````sql
+-- The SQL code to update the author’s name, with ChangeCheck check
+SET NOCOUNT ON;
+UPDATE [Authors] SET [Name] = @p0
+WHERE [ConcurrencyAuthorId] = @p1
+	AND [ChangeCheck] = @p2; -- Checks that the ChangeCheck column hasn’t been changed since you read in the book entity
+SELECT [ChangeCheck] -- Because the update will change the ChangeCheck column, EF Core needs to read it back so that its in-memory copy is correct.
+FROM [Authors]
+WHERE @@ROWCOUNT = 1 -- Checks whether one row was updated in the last command. If not, the ChangeCheck value won’t be returned, and EF Core will know that a concurrent change has taken place.
+	AND [ConcurrencyAuthorId] = @p1;
+````
+
+The `UPDATE` part checks whether the `ChangeCheck` column is the same value as the copy it found when it first read the entity, and if so, it executes the update. The second part returns the new `ChangeCheck` column that the database server created after the current update, but only if the `UPDATE` was executed. If no value is returned for the `ChangeCheck` property, EF Core knows that a concurrency conflict has happened and throws a `DbUpdateConcurrencyException`.
+The concurrency-token approach provides specific protection of the property/properties you place it on and is triggered only if a property marked as a concurrency token is changed. The timestamp approach catches any update to that entity.
+
+
+
+#### Handling a DbUpdateConcurrencyException
+
+````c#
+// The method you call to save changes that trap concurrency conflicts
+public static string BookSaveChangesWithChecks(ConcurrencyDbContext context) // Called after the Book entity has been updated in some way
+{
+    string error = null;
+    try
+    {
+        context.SaveChanges(); // Calls SaveChanges within a try...catch so that you can catch DbUpdateConcurrencyException if it occurs
+    }
+    catch (DbUpdateConcurrencyException ex) // Catches DbUpdateConcurrencyException and puts in your code to handle it
+    {
+        var entry = ex.Entries.Single(); // In this case, you know that only one Book will be updated. In other cases, you might need to handle multiple entities.
+        error = HandleBookConcurrency(context, entry); // Calls the HandleBookConcurrency method, which returns null if the error was handled or an error message if it wasn’t
+        if (error == null)
+        {
+            context.SaveChanges(); // If the conflict was handled, you need to call SaveChanges to update the Book.
+        }
+    }
+    return error; // Returns the error message or null if there’s no error
+}
+````
+
+
+
+![](./diagrams/images/10_06_handling_db_update_concurrency_exception.png)
+
+
+
+````c#
+// Handling a concurrent update on the book
+private static string HandleBookConcurrency(DbContext context, EntityEntry entry) // Takes in the application’s DbContext and the ChangeTracking entry from the exception’s Entities property
+{
+    var book = entry.Entity as ConcurrencyBook;
+    if (book == null) // Handles only ConcurrencyBook, so throws an exception if the entry isn’t of type Book
+    {
+        throw new NotSupportedException("Don't know how to handle concurrency conflicts for " + entry.Metadata.Name);
+    }
+
+    var whatTheDatabaseHasNow = // You want to get the data that someone else wrote into the database after your read.
+        context.Set<ConcurrencyBook>().AsNoTracking() // Entity must be read as NoTracking; otherwise, it’ll interfere with the same entity you’re trying to write.
+        	.SingleOrDefault(p => p.ConcurrencyBookId == book.ConcurrencyBookId);
+    if (whatTheDatabaseHasNow == null) // Concurrency conflict method doesn’t handle the case where the book was deleted, so it returns a userfriendly error message.
+    {
+        return "Unable to save changes.The book was deleted by another user.";
+    }
+
+    var otherUserData = context.Entry(whatTheDatabaseHasNow); // You get the EntityEntry<T> version of the entity, which has all the tracking information.
+
+    foreach (var property in entry.Metadata.GetProperties()) // You go through all the properties in the book entity to reset the Original values so that the exception doesn’t happen again.
+    {
+        var theOriginalValue = entry
+            .Property(property.Name).OriginalValue; // Holds the version of the property at the time you did the tracked read of the book
+        var otherUserValue = otherUserData
+            .Property(property.Name).CurrentValue; // Holds the version of the property as written to the database by someone else
+        var whatIWantedItToBe = entry
+            .Property(property.Name).CurrentValue; // Holds the version of the property that you wanted to set it to in your update
+
+        // TODO: Logic to decide which value should be written to database
+        if (property.Name == nameof(ConcurrencyBook.PublishedOn)) // Business logic to handle PublishedOn: sets to your value or the other person’s value, or throws an exception
+        {
+            entry.Property(property.Name).CurrentValue = //… your code to pick which PublishedOn to use
+        }
+
+        entry.Property(property.Name).OriginalValue =
+            otherUserData.Property(property.Name)
+            .CurrentValue; // Here, you set the OriginalValue to the value that someone else set it to. This code works for concurrency tokens or a timestamp.
+    }
+    return null; // You return null to say that you handled this concurrency issue.
+}
+````
+
+
+
+#### The disconnected concurrent update issue
+
+
+
+![](./diagrams/images/10_07_disconnected_concurrent_update_issue.png)
+
+
+
+If a concurrency conflict exists, the user is shown a new screen with an error message indicating what happened. Then the user is invited to accept the current state or apply the update, knowing that this update will override the last user’s update.
+
+
+
+![](./diagrams/images/10_08_disconnected_concurrent_update_issue.png)
+
+
+
+````c#
+// Entity class used to hold an employee’s salary with concurrency check
+public class Employee
+{
+    public int EmployeeId { get; set; }
+
+    public string Name { get; set; }
+
+    [ConcurrencyCheck]
+    public int Salary { get; set; } // Salary property set as a concurrency token by the ConcurrencyCheck attribute
+
+    public void UpdateSalary(DbContext context, int orgSalary, int newSalary) // Updates the Salary in a disconnected state
+    {
+        Salary = newSalary; // Sets the Salary to the new value
+        context.Entry(this).Property(p => p.Salary)
+            .OriginalValue = orgSalary; // Sets the OriginalValue, which holds the data read from the database, to the original value that was shown to the user in the first part of the update
+    }
+}
+````
+
+After applying the `UpdateSalary` method to the Employee entity of the person whose salary you want to change, you call `SaveChanges` within a `try…catch` block to update the Employee. If `SaveChanges` raises `DbUpdateConcurrencyException`, the job of the `DiagnoseSalaryConflict` method shown in the following listing isn’t to fix the conflict, but to create an appropriate error message so that the user can decide what to do.
+
+````c#
+// Returns different errors for update or delete concurrency conflicts
+private string DiagnoseSalaryConflict(ConcurrencyDbContext context, EntityEntry entry) // Called if a DbUpdateConcurrencyException occurs. Its job isn’t to fix the problem but to form an error message and provide options for fixing the problem.
+{
+    var employee = entry.Entity as Employee;
+    if (employee == null) // If the entity that failed wasn’t an Employee, you throw an exception, as this code can’t handle that.
+    {
+        throw new NotSupportedException("Don't know how to handle concurrency conflicts for " +
+                                        entry.Metadata.Name);
+    }
+
+    var databaseEntity = // You want to get the data that someone else wrote into the database after your read.
+        context.Employees.AsNoTracking() // Must be read as NoTracking; otherwise, it’ll interfere with the same entity you’re trying to write.
+        .SingleOrDefault(p => p.EmployeeId == employee.EmployeeId);
+
+    if (databaseEntity == null) // Checks for a delete conflict: the employee was deleted because the user attempted to update it.
+    {
+        return
+            $"The Employee {employee.Name} was deleted by another user. " +
+            $"Click Add button to add back with salary of {employee.Salary}" +
+            " or Cancel to leave deleted."; // Error message to display to the user, with two choices about how to carry on
+    }
+
+    return
+        $"The Employee {employee.Name}'s salary was set to " +
+        $"{databaseEntity.Salary} by another user. " +
+        $"Click Update to use your new salary of {employee.Salary}" +
+        $" or Cancel to leave the salary at {databaseEntity.Salary}."; // Otherwise, the error must be an update conflict, so you return a different error message with the two choices for this case.
+}
+````
+
+The update conflict can be handled by using the same `UpdateSalary` method used for the normal update, but now the `orgSalary` parameter is the salary value as read back when the `DbUpdateConcurrencyException` was raised. The `FixDeleteSalary` method is used when the concurrent user deletes the `Employee` and the current user wants to add the Employee back with their new salary value.
+
+````c#
+// Two methods to handle update and delete conflicts
+public class Employee
+{
+    public int EmployeeId { get; set; }
+
+    public string Name { get; set; }
+
+    [ConcurrencyCheck] // Set as a concurrency token by the ConcurrencyCheck attribute
+    public int Salary { get; set; } // The same method used to update the Salary can be used for the Update conflict, but this time, it’s given the original value that was found when the DbUpdateConcurrencyException occurred.
+
+    public void UpdateSalary(DbContext context, int orgSalary, int newSalary)
+    {
+        Salary = newSalary;
+        context.Entry(this).Property(p => p.Salary)
+            .OriginalValue = orgSalary; // Sets the OriginalValue, which is now the value that the database contained when the DbUpdateConcurrencyException occurred
+    }
+
+    public static void FixDeletedSalary(DbContext context, Employee employee) // Handles the Delete concurrency conflict
+    {
+        employee.EmployeeId = 0; // The key must be at the CLR default value for an Add to work.
+        context.Add(employee); // Adds the Employee because it was deleted from the database and therefore must be added back
+    }
+}
+````
+
+
+
+### Summary
+
+* Using SQL user-defined functions (UDFs) with EF Core to move calculations into the database can improve query performance.
+* Configuring a column as an SQL computed column allows you to return a computed value based on the other properties in the row.
+* EF Core provides two ways to set a default value for a property/column in an entity; these techniques go beyond what setting a default value via .NET could achieve.
+* EF Core’s `HasSequence` method allows a known, predictable sequence provided by the database server to be applied to a column in a table.
+* When the database is created/migrated outside EF Core, you need to configure columns that behave differently from the norm, such as telling EF Core that a key is generated in the database.
+* EF Core provides concurrency tokens and timestamps to detect concurrency conflicts.
+* When a concurrency conflict is detected, EF Core throws `DbUpdateConcurrencyException` and then allows you to implement code to handle the conflict.
+
+
+
+
+
+## 11. Going deeper into the DbContext
+
+* Seeing how your application’s DbContext detects changes in tracked entities
+* Using the change tracking method in your DbContext to build an audit trail
+* Using raw SQL commands via the DbContext’s `Database` property
+* Finding the entities to database mapping using DbContext’s `Model` property
+* Using EF Core’s database connection resiliency
+
+
+
