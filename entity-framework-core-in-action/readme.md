@@ -7597,3 +7597,631 @@ public class Employee
 
 
 
+### Overview of the DbContext class’s properties
+
+* ChangeTracker - Provides access to EF Core’s change tracking code.
+* ContextId - A unique identifier for the instance of the DbContext. Its main role is to be a correlation ID for logging and debugging so that you can see what reads and writes were done from the same instance of the application’s DbContext.
+* Database - Provides access to three main groups of features:
+  - Transaction control
+  - Database creation/migration
+  - Raw SQL commands
+* Model - Provides access to the database model that EF Core uses when connecting to or creating a database.
+
+
+
+### Understanding how EF Core tracks changes
+
+EF Core uses a property called `State` that’s attached to all tracked entities. The `State` property holds the information about what you want to happen to that entity when you call the application’s DbContext method, `SaveChanges`.
+
+The following list lists possible values of the State property, which is accessed via the EF command `context.Entry(myEntity).State`:
+
+* `Added` - The entity doesn’t yet exist in the database. `SaveChanges` will insert it.
+* `Unchanged` - The entity exists in the database and hasn’t been modified on the client. `SaveChanges` will ignore it.
+* `Modified` - The entity exists in the database and has been modified on the client. `SaveChanges` will update it.
+* `Deleted` - The entity exists in the database but should be deleted. `SaveChanges` will delete it.
+* `Detached` - The entity you provided isn’t tracked. `SaveChanges` doesn’t see it.
+
+
+
+When you have an entity in the `Modified` state, another per-property `boolean` flag, `IsModified`, comes into play. This flag identifies which of the properties, both scalar and navigational, have changed in the entity. This `IsModified` property for a scalar property is accessed via
+
+````c#
+context.Entry(entity).Property("PropertyName").IsModified;
+````
+
+and the `IsModified` property for navigational properties is accessed via
+
+````c#
+context.Entry(entity).Navigation("PropertyName").IsModified;
+````
+
+
+
+### Looking at commands that change an entity’s State
+
+All the EF Core commands/actions that can change a tracked entity’s `State`, showing an example of each command/action and the final tracking `State` of the entity:
+
+| Command/Action                   | Example                              | Final State   |
+| -------------------------------- | ------------------------------------ | ------------- |
+| `Add`/`AddRange`                 | `context.Add(entity);`               | `Added`       |
+| `Remove`/`RemoveRange`           | `context.Remove(entity);`            | `Deleted`     |
+| Changing a property              | `entity.MyString = "hello";`         | `Modified`    |
+| `Update`/`UpdateRange`           | `context.Update(entity);`            | `Modified`    |
+| `Attach`/`AttachRange`           | `context.Attach(entity);`            | `Unchanged`   |
+| Setting `State` directly         | `context.Entry(entity).State = …`    | Given `State` |
+| Setting `State` via `TrackGraph` | `context.ChangeTracker.TrackGraph(…` | Given `State` |
+
+
+
+#### The Add command: Inserting a new row into the database
+
+The `Add`/`AddRange` methods are used to create a new entity in the database by setting the
+given entity’s `State` to `Added`. To summarize:
+
+* The entity’s `State` is set to `Added`.
+* The `Add` method looks at all the entities linked to the added entity.
+  - If a relationship isn’t currently tracked, it is tracked, and its `State` is set to `Added`.
+  - If a relationship is tracked, its current `State` is used unless there was a requirement to alter/set a foreign key, in which case its `State` is set to `Modified`.
+
+Also, the `AddAsync`/`AddRangeAsync` methods are available for entities that use a value generator to set a property. If the value generator has a `NextAsync` method, you must use the `AddAsync`/`AddRangeAsync` methods when that entity is added.
+
+
+
+#### The Remove method: Deleting a row from the database
+
+The `Remove`/`RemoveRange` methods delete the entity from the database by setting the given entity’s `State` to `Deleted`. If the removed entity has any relationships that are loaded/tracked, the value of the `State` for each relationship entities will be one of the following:
+
+* `State == Deleted` - Typical for a required dependent relationship, such as a `Review` entity class linked to a `Book` entity class
+* `State == Modified` - Typical for an optional dependent relationship in which the foreign key is nullable. In this case, the optional relationship is not deleted, but the foreign key that links to the entity that was deleted is set to `null`.
+* `State == Unchanged` - Result of deleting a dependent entity class that is linked to a principal class. Nothing changes in the principal class keys/foreign keys when a dependent entity class is deleted.
+
+If the `OnDelete` behavior is set to `Cascade`, which is the default for a required dependent relationship, it will delete any required dependent relationships of the deleted entity class.
+
+
+
+#### Modifying an entity class by changing the data in that entity class
+
+* For EF Core to detect a change, the entity must be tracked. Entities are tracked if you read them in without an `AsNoTracking` method in the query or when you call a `Add`, `Update`, `Remove`, or `Attach` method with an entity class as a parameter.
+* When you call `SaveChanges`/`SaveChangesAsync`, by default, EF Code executes a method called `ChangeTracker.DetectChanges`, which compares the current entity’s data with the entity’s tracking snapshot. If any properties, backing fields, or shadow properties are different, the entity’s `State` is set to `Modified`, and the properties, backing fields, or shadow properties are set to `IsModified`.
+
+
+
+![](./diagrams/images/11_01_modifying_entity_class.png)
+
+
+
+#### Modifying an entity class by calling the Update method
+
+The `ChangeTracker.DetectChanges` method won’t work because there is no tracking snapshot to compare. In cases like this one, you can use the `Update` and `UpdateRange` methods.
+
+The Update method tells EF Core to update all the properties/columns in this entity by setting the given entity’s `State` to `Modified` and sets the `IsModified` property to `true` on all nonrelational properties, including any foreign keys. As a result, the row in the database will have all its columns updated.
+
+If the entity type using the `Update` call has loaded relationships, the `Update` method will recursively look at each related entity class and set its `State`. The rules for setting the `State` on a related entity class depend on whether the relationship entity’s primary key is generated by the database and is set (its value isn’t the default value for the key’s .NET type):
+
+* Database-generated key, not the default value - In this case, EF Core will assume that the relationship entity is already in the database and will set the `State` to `Modified` if a foreign key needs to be set; otherwise, the `State` will be `Unchanged`.
+* Not database-generated key, or the key is the default value - In this case, EF Core will assume that the relationship entity is new and will set its `State` to `Added`.
+
+
+
+#### The Attach method: Start tracking an existing untracked entity class
+
+The `Attach` and `AttachRange` methods are useful if you have an entity class with existing valid data and want it to be tracked. After you attach the entity, it’s tracked, and EF Core assumes that its content matches the current database state. This behavior works well for reconstituting entities with relationships that have been serialized and then deserialized to an entity, but only if the entities are written back to the same database, as the primary and foreign keys need to match.
+
+When you Attach an entity, it becomes a normal tracked entity, without the cost of loading it from the database. The `Attach` method does this by setting the entity’s `State` to `Unchanged`. As with the `Update` method, what happens to the relationships of the updated entity depends on whether the relationship entity’s primary key is generated by the database and is set (its value isn’t the default value for the key’s .NET type):
+
+* *Database-generated key, and key has a default value* - EF Core will assume that the relationship entity is already in the database and will set the `State` to `Added`.
+* *Not a database-generated key, or the key is the not default value* - EF Core will assume that the relationship entity is new and will set its `State` to `Unchanged`.
+
+
+
+#### Setting the State of an entity directly
+
+Another way to set the `State` of an entity is to set it manually to whatever state you want. This direct setting of an entity’s `State` is useful when an entity has many relationships, and you need to specifically decide which state you want each relationship to have.
+
+Because the entity’s State is read/write, you can set it. In the following code snippet, the `myEntity` instance’s `State` is set to `Added`:
+
+````c#
+context.Entry(myEntity).State = EntityState.Added;
+````
+
+You can also set the `IsModified` flag on the property in an entity. The following code snippet sets the `MyString` property’s `IsModified` flag to true, which sets the entity’s `State` to `Modified`:
+
+````c#
+var entity = new MyEntity();
+context.Entry(entity).Property("MyString").IsModified = true;
+````
+
+
+
+#### TrackGraph: Handling disconnected updates with relationships
+
+The `TrackGraph` method is useful if you have an untracked entity with relationships, and you need to set the correct `State` for each entity. The `TrackGraph` method will traverse all the relational links in the entity, calling an action you supplied on each entity it finds. This method is useful if you have a group of linked entities coming from a disconnected situation (say, via some form of serialization), and you want to change only part of the data you’ve loaded.
+
+
+
+````c#
+// Using TrackGraph to set each entity’s State and IsModified flags
+var book = … untracked book with all relationships // Expects an untracked book with its relationships
+context.ChangeTracker.TrackGraph(book, e => // Calls ChangeTracker.TrackGraph, which takes an entity instance and an Action, which, in this case, you define via a lambda. The Action method is called once on each entity in the graph of entities.
+{
+    e.Entry.State = EntityState.Unchanged; // If the method sets the state to any value other than Detached, the entity will become tracked by EF Core.
+
+    if (e.Entry.Entity is Author) // Here, you want to set only the Name property of the Author entity to Modified, so you check whether the entity is of type Author.
+    {
+        e.Entry.Property("Name").IsModified = true; // Sets the IsModified flag on the Name property; also sets the State of the entity to Modified
+    }
+});
+context.SaveChanges(); // Calls SaveChanges, which finds that only the Name property of the Author entity has been marked as changed; creates the optimal SQL to update the Name column in the Authors table
+````
+
+`TrackGraph` traverses the entity provided as its first parameter and any entities that are reachable by traversing its navigation properties. The traversal is recursive, so the navigation properties of any discovered entities will also be scanned. The `Action` method you provide as the second parameter is called for each discovered untracked (`State == Detached`) entity and can set the `State` that each entity should be tracked in. If the visited entity’s `State` isn’t set, the entity remains in the `State` of `Detached` (that is, the entity isn’t being tracked by EF Core). Also, `TrackGraph` will ignore any entities it visits that are currently being tracked.
+
+Although you could still use the `Update` command for this purpose, doing so would be inefficient because the command would update every table and column in the book’s relationships instead of only the authors’ names. EF Core’s `ChangeTracker.TrackGraph` method provides a better approach.
+
+Using `TrackGraph` allows you to target the specific entity and property you want to set the `State` to a new value; in this case, you set the property called `Name` to `IsModified` in any `Author` entity class in the relationships of the `Book` entity.
+
+The result of running this code is that only the `Author` entity instance’s `State` is set to `Modified`, whereas the `State` of all the other entity types is set to `Unchanged`. In addition, the `IsModified` flag is set only on the `Author` entity class’s `Name` property. In this example, the difference between using an `Updated` method and using the `TrackGraph` code reduces the number of database updates: the `Updated` method would produce 20 column updates (19 of them needlessly), whereas the `TrackGraph` code would change only one column.
+
+
+
+### SaveChanges and its use of ChangeTracker.DetectChanges
+
+#### How SaveChanges finds all the State changes
+
+Whereas states such as `Added` and `Deleted` are set by the EF Core commands, the "change a property" approach to updates relies on code to compare each entity class with its tracking snapshot. To do so, `SaveChanges` calls a method called `DetectChanges` that is accessed via the `ChangeTracker` property. If you have a lot of entities with lots of data, the process can become slow.
+
+
+
+![](./diagrams/images/11_02_savechanges_finds_all_the_state_changes.png)
+
+
+
+#### What to do if ChangeTracker.DetectChanges is taking too long
+
+In some applications, you may have a large number of tracked entities loaded. The problem is if you have a large amount of tracked entity instances and/or your entities have a lot of data in them. In that case, a call to `SaveChanges`/`SaveChangesAsync` can become slow. If you are saving a lot of data, the slowness is most likely caused by the database accesses. But if you are saving only a small amount of data, any slowdown is likely due to the time the `ChangeTracker.DetectChanges` takes to compare each entity class instance with its matching tracking snapshot.
+
+These features work by detecting individual updates to the data in your entity classes, cutting out any comparisons of data that hasn’t been changed.
+
+You have four ways to replace the `ChangeTracker.DetectChanges`; each approach has different features and different levels of effort to implement.
+
+A comparison of the four approaches you can use to stop the `ChangeTracker.DetectChanges` method from looking at an entity, thus saving time:
+
+`INotifyPropertyChanged`
+
+* Pros
+  * Can change only the entities that are slow
+  * Handles concurrency exceptions
+* Cons
+  * Need to edit every property
+
+`INotifyPropertyChanged` and `INotifyPropertyChanging`
+
+* Pros
+  * Can change only the entities that are slow
+  * No tracking snapshot, so uses less memory
+* Cons
+  * Need to edit every property
+
+Proxy change tracking `INotifyPropertyChanged`
+
+* Pros
+  * Easy to code; add virtual to every property
+  * Handles concurrency exceptions
+* Cons
+  * Must change all entity types to use proxy
+
+Proxy change tracking `INotifyPropertyChanged` and `INotifyPropertyChanging`
+
+* Pros
+  * Easy to code; add virtual to every property
+  * No tracking snapshot, so uses less memory
+* Cons
+  * Must change all entity types to use proxy
+  * Have to create a new entity class via the `CreateProxy<T>` method
+
+Overall, the proxy change tracking feature is easier to code but requires you to change all your entity classes to use proxy change tracking. But if you find a `SaveChanges` performance issue in an existing application, changing all your entity classes might be too much work. For this reason, We can focus on the first approach, `INotifyPropertyChanged`, which is easy to add to a few entity classes that have a problem, and the last approach, proxy changed/changing tracking, which is easier but requires you to use it across the whole application.
+
+
+
+**FIRST APPROACH: INOTIFYPROPERTYCHANGED**
+
+EF Core supports the `INotifyPropertyChanged` interface on an entity class to detect whether any property has changed. This interface notifies EF Core that a property has changed, but you have to raise a `PropertyChanged` event, which means the `ChangeTracker.DetectChanges` method isn’t used.
+
+To use the `INotifyPropertyChanged` interface you need to create a `NotificationEntity` helper class. This class provides a `SetWithNotify` method that you call when any property in your entity class changes.
+
+
+
+````c#
+// NotificationEntity helper class that NotifyEntity inherits
+public class NotificationEntity : INotifyPropertyChanged
+{
+    public event PropertyChangedEventHandler PropertyChanged;
+    
+    protected void SetWithNotify<T>(T value, ref T field, [CallerMemberName] string propertyName = "") // Automatically gets the propertyName by using System.Runtime.CompilerServices
+    {
+        if (!Object.Equals(field, value)) // Only if the field and the value are different do you set the field and raise the event.
+        {
+            field = value; // Sets the field to the new value
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName)); // Invokes the PropertyChanged event, but using ?. to stop the method from failing when the new entity is created and the PropertyChangedEventHandler hasn’t been filled in by EF Core with the name of the property
+        }
+    }
+}
+````
+
+You must call the `SetWithNotify` method whenever a noncollection property changes. For collections, you have to use a `ObservableCollection` to raise an event when a navigational collection property is changed.
+
+````c#
+// NotifyEntity using NotificationEntity class for events
+public class NotifyEntity : NotificationEntity
+{
+    // Each noncollection property must have a backing field.
+    private int _id;
+    private string _myString;
+    private NotifyOne _oneToOne;
+
+    public int Id
+    {
+        get => _id;
+        set => SetWithNotify(value, ref _id);
+    }
+
+    public string MyString
+    {
+        get => _myString;
+        set => SetWithNotify(value, ref _myString);
+    }
+
+    public NotifyOne OneToOne
+    {
+        get => _oneToOne;
+        set => SetWithNotify(value, ref _oneToOne);
+    }
+
+    public ObservableCollection<NotifyMany> Collection { get; } // Any collection navigational property must be an Observable collection, so you need to predefine that Observable collection.
+    = new ObservableCollection<NotifyMany>(); // You can use any Observable collection, but for performance reasons, EF Core prefers ObservableHashSet<T>.
+}
+````
+
+
+
+After you’ve defined your entity class to use the `INotifyPropertyChanged` interface, you must configure the tracking strategy for this entity class to `ChangedNotifications`. This configuration tells EF Core not to detect changes via `ChangeTracker.DetectChanges` because it will be notified of any changes via `INotifyPropertyChanged` events. To configure `INotifyPropertyChanged` events for one entity class, you use the Fluent API command.
+
+````c#
+// Setting the tracking strategy for one entity to ChangedNotifications
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    modelBuilder
+        .Entity<NotifyEntity>()
+        .HasChangeTrackingStrategy(
+        	ChangeTrackingStrategy.ChangedNotifications);
+}
+````
+
+
+
+**APPROACHES 2 AND 3**
+
+* The `NotificationEntity` class must create change and changing events.
+* You use a different `ChangeTrackingStrategy` setting, such as `ChangingAndChangedNotifications`.
+
+
+
+**LAST APPROACH: PROXY CHANGE TRACKING**
+
+The last approach uses proxy change tracking via the `INotifyPropertyChanged` and `INotifyPropertyChanging` events introduced. These change-tracking events are added to the lazy-loading proxy approach with the virtual properties. To use this approach, you need to do five things:
+
+* Change all your entity classes to have virtual properties.
+* Use an `Observable` collection type for navigational collection properties.
+* Change your code that creates a new instance of an entity class to use the `CreateProxy<TEntity>` method.
+* Add the NuGet library `Microsoft.EntityFrameworkCore.Proxies`.
+* Add the method `UseChangeTrackingProxies` when building the application’s DbContext options.
+
+
+
+````c#
+// An example entity class set up to use proxy change tracking
+public class ProxyMyEntity
+{
+    // All properties must be virtual.
+    public virtual int Id { get; set; }
+    public virtual string MyString { get; set; }
+    public virtual ProxyOptional ProxyOptional { get; set; }
+
+    public virtual ObservableCollection<ProxyMany> Many { get; set; } = new ObservableCollection<ProxyMany>(); // For navigational collection properties, you need to use an Observable collection type.
+}
+````
+
+If you read in an entity class via a query, the proxy change tracking will add its extra code to create the `INotifyPropertyChanged` and `INotifyPropertyChanging` events when a property is changed. But if you want to create a new entity class, you can’t use the normal new command, such as `new Book()`. Instead, you must use the `CreateProxy<TEntity>` method.
+
+````c#
+var entity = context.CreateProxy<ProxyMyEntity>();
+entity.MyString = "hello";
+context.Add(entity);
+context.SaveChanges();
+````
+
+You must use the `CreateProxy<TEntity>` method (first line of the preceding code snippet); otherwise, EF Core won’t be able to detect the changing event.
+
+The final part is making sure that the `Microsoft.EntityFrameworkCore.Proxies` NuGet package is loaded and then updating your DbContext configuration to include the `UseChangeTrackingProxies` method, as shown in the following code snippet:
+
+````c#
+var optionsBuilder = new DbContextOptionsBuilder<EfCoreContext>();
+optionsBuilder
+    .UseChangeTrackingProxies()
+    .UseSqlServer(connection);
+var options = optionsBuilder.Options;
+
+using (var context = new EfCoreContext(options))
+````
+
+
+
+#### Using the entities’ State within the SaveChanges method
+
+So far, you’ve learned how to set the `State` of an entity and heard about how `ChangeTracker` can be used to find out what has changed. Now you are going to use the `State` data within the `SaveChanges`/`SaveChangesAsync` to do some interesting things. Here are some of the possible uses of detecting what’s about to be changed in the database:
+
+* Automatically adding extra information to an entity - for instance, adding the time when an entity was added or updated
+* Writing a history audit trail to the database each time a specific entity type is changed
+* Add security checks to see whether the current user is allowed to update that particular entity type
+
+The basic approach is to override the `SaveChanges`/`SaveChangesAsync` methods inside your application’s DbContext and execute a method before the base `SaveChanges`/`SaveChangesAsync` is called. We check the `States` before the base `SaveChanges` is called because a) the `State` of every tracked entity will have a value of `Unchanged` once `SaveChanges` is called and b) you want to add/alter some of the entities before they are written to the database. What you do with the `State` information is up to you.
+
+
+
+````c#
+// The ICreatedUpdated interface defining four properties and a method
+public interface ICreatedUpdated // Add this interface to any entity class where you want to log when/who it was created or updated.
+{
+    DateTime WhenCreatedUtc { get; } // Holds the datetime when the entity was first added to the database
+    Guid CreatedBy { get; } // Holds the UserId who created the entity
+    DateTime LastUpdatedUtc { get; } // Holds the datetime when the entity was last updated
+    Guid LastUpdatedBy { get; } // Holds the UserId who last updated the entity
+    
+    void LogChange(EntityState state, Guid userId = default); // Called when the entity’s state is Added or Modified State. Its job is to update the properties based on the state.
+}
+````
+
+The `LogChange` method, which you’ll call in your modified `SaveChanges` method, sets the various properties in the entity class.
+
+````c#
+// Automatically setting who and when a entity was updated
+public class CreatedUpdatedInfo : ICreatedUpdated // Entity class inherits ICreatedUpdated, which means any addition/update of the entity is logged.
+{
+    // These properties have private setters so that only the LogChange method can change them.
+    public DateTime WhenCreatedUtc { get; private set; }
+    public Guid CreatedBy { get; private set; }
+    public DateTime LastUpdatedUtc { get; private set; }
+    public Guid LastUpdatedBy { get; private set; }
+
+    public void LogChange(EntityEntry entry, Guid userId = default) // Its job is to update the created and updated properties. It is passed the UserId if available.
+    {
+        if (entry.State != EntityState.Added && entry.State != EntityState.Modified) // This method only handles Added or Modified States.
+        {
+            return;
+        }
+
+        var timeNow = DateTime.UtcNow; // Obtains the current time so that an add and update time will be the same on create
+        LastUpdatedUtc = timeNow;
+        LastUpdatedBy = userId; // It always sets the LastUpdatedUtc and LastUpdatedBy.
+        if (entry.State == EntityState.Added) // If it’s an add, then you update the WhenCreatedUtc and the CreatedBy properties.
+        {
+            WhenCreatedUtc = timeNow;
+            CreatedBy = userId;
+        }
+        else
+        {
+            // For performance reasons you turned off DetectChanges, so you must manually mark the properties as modified.
+            entry.Property(
+                nameof(ICreatedUpdated.LastUpdatedUtc))
+                .IsModified = true;
+            entry.Property(
+                nameof(ICreatedUpdated.LastUpdatedBy))
+                .IsModified = true;
+        }
+    }
+}
+````
+
+The next step is to override all versions of the `SaveChanges` method inside your application’s DbContext and then precede the call to the base `SaveChanges` with a call to your `AddUpdateChecks` method. This method looks for entities with a `State` of `Added` or `Modified` and inherits the `ICreatedUpdated` interface. If the method finds an entity (or entities) that fits that criteria, it calls the entity’s `LogChange` method to set the two properties to the correct values.
+
+Notice too that the code ensures the `ChangeTracker.DetectChanges` method is only called once, because, as you have seen, that method can take some time.
+
+````c#
+// Your DbContext looks for added or modified ICreatedUpdated entities
+private void AddUpdateChecks() // This private method will be called from SaveChanges and SaveChangesAsync.
+{
+    ChangeTracker.DetectChanges(); // It calls DetectChanges to make sure all the updates have been found.
+    foreach (var entity in ChangeTracker.Entries()
+             .Where(e =>
+                    e.State == EntityState.Added ||
+                    e.State == EntityState.Modified)) // It loops through all the tracked entities that have a State of Added or Modified.
+    {
+        var tracked = entity.Entity as ICreatedUpdated; // If the Added/Modified entity has the ICreatedUpdated, then the tracked isn’t null.
+        tracked?.LogChange(entity); // So we call the LogChange command. In this example we don’t have the UserId available.
+    }
+}
+
+public override int SaveChanges(bool acceptAllChangesOnSuccess) // You override SaveChanges (and SaveChangesAsync—not shown).
+{
+    AddUpdateChecks(); // You call the AddUpdateChecks, which contains a call to ChangeTracker.DetectChanges().
+    try
+    {
+        ChangeTracker.AutoDetectChangesEnabled = false; // Because DetectChanges has been called we tell SaveChanges not to call it again (for performance reasons).
+        return base.SaveChanges(acceptAllChangesOnSuccess); // You call the base.SaveChanges that you overrode
+    }
+    finally
+    {
+        ChangeTracker.AutoDetectChangesEnabled = true; // Finally to turn the AutoDetectChangesEnabled back on
+    }
+}
+````
+
+This is only one example of using `ChangeTracker` to take actions based on the `State` of tracked entities, but it establishes the general approach. The possibilities are endless.
+
+
+
+#### Catching entity class’s State changes via events
+
+EF Core added two events: `ChangeTracker.Tracked`, which is triggered when an entity is first tracked, and `ChangeTracker.StateChanged`, which is triggered when the `State` of an already tracked entity is changed. This feature provides a similar effect to calling `ChangeTracker.Entries()`, but by producing an event when something changes. The `ChangeTracker` events are useful for features such as logging changes or triggering actions when a specific entity type’s `State` changes.
+
+The `Tracked` event, which is simpler, is triggered when an entity class is first tracked and tells you whether it came from a query via its `FromQuery` property. That event could occur when you execute an EF Core query (without the `AsNoTracking` method) or start tracking an entity class via an `Add` or `Attach` method.
+
+````c#
+// Example of a ChangeTracker.Tracked event and what it contains
+var logs = new List<EntityTrackedEventArgs>(); // Holds a log of any tracked events
+context.ChangeTracker.Tracked += delegate(
+    object sender, EntityTrackedEventArgs args) // You register your event handler to the ChangeTracker.Tracked event.
+{
+    logs.Add(args); // This event handler simply logs the EntityTrackedEventArgs.
+};
+
+//ATTEMPT
+var entity = new MyEntity { MyString = "Test" }; // Creates an entity class
+context.Add(entity); // Adds that entity class to context
+
+//VERIFY
+logs.Count.ShouldEqual(1);
+logs.Single().FromQuery.ShouldBeFalse(); // The entity wasn’t tracking during a query.
+logs.Single().Entry.Entity.ShouldEqual(entity); // You can access the entity that triggered the event.
+logs.Single().Entry.State
+    .ShouldEqual(EntityState.Added); // You can also get the current State of that entity.
+````
+
+For a `Tracked` event, you get the `FromQuery` flag, which is `true` if the query was tracked during a query. The `Entry` property gives you information about the entity.
+
+One thing to note in this example is that the `context.Add(entity)` method triggers an `Tracked` event but doesn’t trigger a `StateChanges` event. If you want to detect a newly added entity class, you can do so only via the `Tracked` event.
+
+The `StateChanges` event is similar but contains different information. The event contains the entity’s `State` before `SaveChanges` was called in the property called `OldState` and the entity’s `State` after `SaveChanges` was called in the property called `NewState`.
+
+````c#
+// Example of a ChangeTracker.StateChanges event and what it contains
+var logs = new List<EntityStateChangedEventArgs>(); // Holds a log of any StateChanged event
+context.ChangeTracker.StateChanged += delegate (object sender, EntityStateChangedEventArgs args) // You register your event handler to the ChangeTracker.StateChanged event.
+{
+    logs.Add(args); // This event handler simply logs the EntityTrackedEventArgs.
+};
+
+//ATTEMPT
+var entity = new MyEntity { MyString = "Test" }; // Creates an entity class
+context.Add(entity); // Adds that entity class to context
+context.SaveChanges(); // SaveChanges will change the State to Unchanged after the database update.
+
+//VERIFY
+logs.Count.ShouldEqual(1); // There is one event.
+logs.Single().OldState.ShouldEqual(EntityState.Added); // The State before the change was Added
+logs.Single().NewState.ShouldEqual(EntityState.Unchanged); // The State after the change is Unchanged
+logs.Single().Entry.Entity.ShouldEqual(entity); // You get access to the entity data via the Entry property.
+````
+
+Now that you have seen the two `ChangeTracker` events, let’s use them for logging changes to some other form of storage.
+
+````c#
+// Class holding the code to turn ChangeTracker events into logs
+public class ChangeTrackerEventHandler // This class is used in your DbContext to log changes.
+{
+    private readonly ILogger _logger;
+    
+    public ChangeTrackerEventHandler(DbContext context, ILogger logger)
+    {
+        _logger = logger; // You will log to ILogger.
+        context.ChangeTracker.Tracked += TrackedHandler; // Adds a Tracked event handler
+        context.ChangeTracker.StateChanged += StateChangeHandler; // Adds a StateChanged event handler
+    }
+
+    private void TrackedHandler(object sender, EntityTrackedEventArgs args) // Handles Tracked events
+    {
+        if (args.FromQuery) // We do not want to log entities that are read in.
+        {
+            return;
+        }
+
+        var message = $"Entity: {NameAndPk(args.Entry)}. " + $"Was {args.Entry.State}";
+        _logger.LogInformation(message); // Forms a useful message on Add or Attach
+    }
+
+    // The StateChanged event handler logs any changes.
+    private void StateChangeHandler(object sender, EntityStateChangedEventArgs args)
+    {
+        var message = $"Entity: {NameAndPk(args.Entry)}. " + $"Was {args.OldState} and went to {args.NewState}";
+        _logger.LogInformation(message);
+    }
+}
+````
+
+````c#
+// Adding the ChangeTrackerEventHandler to your application DbContext
+public class Chapter11DbContext : DbContext // Your application DbContext that you want to log changes from
+{
+    private ChangeTrackerEventHandler _trackerEventHandler; // You need an instance of the event handler class while the DbContext exists.
+    public Chapter11DbContext(DbContextOptions<Chapter11DbContext> options, ILogger logger = null) : base(options)
+    {
+        if (logger != null) // If an ILogger is available, you register the handlers.
+        {
+            _trackerEventHandler = new ChangeTrackerEventHandler(this, logger); // Creates the event handler class, which registers the event handlers
+        }
+    }
+    //… rest of code left out
+}
+````
+
+Logged messages are rather simple, but you could easily expand these messages to detail what properties have been modified, include the `UserId` of the user who changed things, and so on.
+
+````c#
+// Example output of ChangeTrackerEventHandler event logging
+Entity: MyEntity {Id: -2147482647}. Was Added // Code that triggered that event: context.Add(new MyEntity)
+Entity: MyEntity {Id: 1}. Was Added and went to Unchanged // Code that triggered that event: context.SaveChanges()
+Entity: MyEntity {Id: 1}. Was Unchanged and went to Modified // Code that triggered that event: entity.MyString = "New string" + DetectChanges
+Entity: MyEntity {Id: 1}. Was Modified and went to Unchanged // Code that triggered that event: context.SaveChanges()
+````
+
+
+
+#### Triggering events when SaveChanges/SaveChangesAsync is called
+
+EF Core introduced `SavingChanges`, `SavedChanges`, and `SaveChangesFailed` events, which are called before the data is saved to the database, after the data has been successfully saved to the database, and if the save to the database failed, respectively. These events allow you to tap into what is happening in the `SaveChanges` and `SaveChangesAsync` methods. You could use these events to log what was written to the database or alert someone if there was a certain exception inside `SaveChanges` or `SaveChangesAsync`.
+
+To use these events, you need to subscribe to the `SavingChanges` and `SavedChanges` events.
+
+````c#
+// How to subscribe to the SavingChanges/SavedChanges events
+context.SavingChanges += // This event will trigger when SaveChanges is called but before it updates the database.
+    delegate(object dbContext, 
+             SavingChangesEventArgs args) // The SavingChangesEventArgs contains the SaveChanges Boolean parameter acceptAllChangesOnSuccess.
+{
+    var trackedEntities =
+        ((DbContext)dbContext) // The first parameter is the instance of the DbContext, but you need to cast the object to use it.
+        .ChangeTracker.Entries();
+    
+    //… your code goes here
+};
+
+context.SavedChanges += // This event will trigger when SaveChanges successfully updates the database.
+    delegate(object dbContext,
+             SavedChangesEventArgs args) // The SavedChangesEventArgs contains the count of entities that were saved to the database.
+{
+    //… your code goes here
+};
+
+context.SaveChangesFailed += // This event will trigger when SaveChanges has an exception during an update to the database.
+    delegate(object dbContext,
+             SaveChangesFailedEventArgs args) // The SavingChangesEventArgs contains the exception that happened during the update to the database.
+{
+    //… your code goes here
+};
+````
+
+To use these events, you need to know a few things about them:
+
+* Like all C# events, the subscription to these events lasts only as long as the instance of the DbContext exists.
+* The events are triggered by both the `SaveChanges` and `SaveChangesAsync` methods.
+* The `SavingChanges` event is called before the `ChangeTracker.DetectChanges` method is called, so if you want to implement the code to update entities by using their `State`, you need to call the `ChangeTracker.DetectChanges` method first. This approach isn’t a good idea, however, because `DetectChanges` would be called twice, which could cause a performance issue.
+
+
+
+#### EF Core interceptors
+
+EF Core introduced interceptors that enable you intercept, modify, and/or suppress EF Core operations, including low-level database operations, such as executing a command, as well as higher-level operations, such as calls to `SaveChanges`. These interceptors have some powerful features, such as altering commands being sent to the database.
+
+
+
+### Using SQL commands in an EF Core application
