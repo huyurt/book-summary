@@ -8225,3 +8225,465 @@ EF Core introduced interceptors that enable you intercept, modify, and/or suppre
 
 
 ### Using SQL commands in an EF Core application
+
+EF Core’s SQL commands are designed to detect SQL injection attacks. EF Core provides two types of SQL commands:
+
+* Methods ending in Raw, such as `FromSqlRaw`. In these commands, you provide separate parameters, and those parameters are checked.
+* Methods ending in `Interpolated`, such as `FromSqlInterpolated`. The string parameter provided to these methods used string interpolation with the parameters in the string, such as `$"SELECT * FROM Books WHERE BookId = {myKey}"`. EF Core can check each parameter within the interpolated string type.
+
+If you build an interpolated string outside the command - such as `var badSQL = $"SELECT … WHERE BookId = {myKey}"` - and then use it in a command like `FromSqlRaw(badSQL)`, EF Core can’t check SQL injection attacks. You should use `FromSqlRaw` with parameters or `FromSqlInterpolated` with parameters embedded in a string interpolation.
+
+The groups of SQL commands that are c* overed are
+
+* `FromSqlRaw`/`FromSqlInterpolated` sync/async methods, which allow you to use a raw SQL command in an EF Core query
+* `ExecuteSqlRaw`/`ExecuteSqlInterpolated` sync/async methods, which execute a nonquery command
+* `AsSqlQuery` Fluent API method, which maps an entity class to an SQL query
+* `Reload`/`ReloadAsync` command, used to refresh an EF Core-loaded entity that has been changed by an `ExecuteSql…` method
+* EF Core’s `GetDbConnection` method, which provides low-level database access libraries to access the database directly
+
+
+
+#### FromSqlRaw/FromSqlInterpolated: Using SQL in an EF Core query
+
+The `FromSqlRaw`/`FromSqlInterpolated` methods allow you to add raw SQL commands to a standard EF Core query, including commands that you wouldn’t be able to call from EF Core, such as stored procedures.
+
+
+
+````c#
+// Using a FromSqlInterpolated method to call an SQL stored procedure
+int filterBy = 5;
+var books = context.Books // You start the query in the normal way, with the DbSet<T> you want to read.
+    .FromSqlInterpolated( // The FromSqlInterpolated method allows you to insert an SQL command.
+    	$"EXECUTE dbo.FilterOnReviewRank @RankFilter = {filterBy}") // Uses C#6’s string interpolation feature to provide the parameter
+    .IgnoreQueryFilters() // You need to remove any query filters; otherwise, the SQL won’t be valid.
+    .ToList();
+````
+
+
+
+There are a few rules about an SQL query:
+
+* The SQL query must return data for all properties of the entity type.
+* The column names in the result set must match the column names that properties are mapped to.
+* The SQL query can't contain related data, but you can add the Include method to load related navigational properties.
+
+You can add other EF Core commands after the SQL command, such as `Include`, `Where`, and `OrderBy`.
+
+
+
+````c#
+// Example of adding extra EF Core commands to the end of an SQL query
+double minStars = 4;
+var books = context.Books
+    .FromSqlRaw(
+    	"SELECT * FROM Books b WHERE " +
+    		"(SELECT AVG(CAST([NumStars] AS float)) " + // The SQL calculates the average votes and uses it in an SQL WHERE.
+    		"FROM dbo.Review AS r " +
+    		"WHERE b.BookId = r.BookId) >= {0}", minStars) // In this case, you use the normal sql parameter check and substitution method - {0}, {1}, {2}, and so on.
+    .Include(r => r.Reviews) // The Include method works with the FromSql because you are not executing a store procedure.
+    .AsNoTracking() // You can add other EF Core commands after the SQL command.
+    .ToList();
+````
+
+
+
+If you’re using model-level query filters, the SQL you can write has limitations. `ORDER BY` won’t work, for example. The way around this problem is to apply the `IgnoreQueryFilters` method after the `Sql` command and re-create the model-level query filter in your SQL code.
+
+
+
+#### ExecuteSqlRaw/ExecuteSqlInterpolated: Executing a nonquery command
+
+In addition to putting raw SQL commands in a query, you can execute nonquery SQL commands via EF Core’s `ExecuteSqlRaw`/`ExecuteSqlInterpolated` methods. Typical commands are SQL `UPDATE` and `DELETE`, but any nonquery SQL command can be called.
+
+
+
+````c#
+// The ExecuteSqlCommand method executing an SQL UPDATE
+var rowsAffected = context.Database // The ExecuteSqlRaw is in the context.Database property.
+    .ExecuteSqlRaw( // The ExecuteSqlRaw will execute the SQL and return an integer, which in this case is the number of rows updated.
+    	"UPDATE Books " + // The SQL command is a string, with places for the parameters to be inserted.
+    	"SET Description = {0} " +
+    	"WHERE BookId = {1}",
+    	uniqueString, bookId); // Provides two parameters referred to in the command
+````
+
+The `ExecuteSqlRaw` method returns an integer, which is useful for checking that the command was executed in the way you expected.
+
+
+
+#### AsSqlQuery Fluent API method: Mapping entity classes to queries
+
+This feature allows you to hide your SQL code inside the application’s DbContext’s configuration, and developers can use this `DbSet<T>` property in queries as though it were a normal entity class mapped to an entity.
+
+
+
+As an example, you will create an entity class called `BookSqlQuery` that returns three values for a `Book` entity class: `BookId`, `Title`, and the average votes for this `Book` in a property called `AverageVotes`.
+
+````c#
+// The BookSqlQuery class to map to an SQL query
+public class BookSqlQuery
+{
+    [Key]
+    public int BookId { get; set; }
+
+    public string Title { get; set; }
+    
+    public double? AverageVotes { get; set; }
+}
+````
+
+````c#
+// Configuring the BookSqlQuery entity class to an SQL query
+public class BookDbContext : DbContext
+{
+    //… other DbSets removed for clarity
+
+    public DbSet<BookSqlQuery> BookSqlQueries { get; set; } // You add a DbSet<T> for the BookSqlQuery entity class to make querying easy.
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        //… other configrations removed for clarity
+
+        modelBuilder.Entity<BookSqlQuery>().ToSqlQuery( // The ToSqlQuery method maps the entity class to an SQL query.
+            @"SELECT BookId
+            	,Title
+            	,(SELECT AVG(CAST([r0].[NumStars] AS float))
+            FROM Review AS r0
+            WHERE t.BookId = r0.BookId) AS AverageVotes
+            FROM Books AS t");
+    }
+}
+````
+
+You can add LINQ commands, such as `Where` and `OrderBy`, in the normal way, but the returned data follows the same rules as the `FromSqlRaw` and `FromSqlInterpolated` methods.
+
+
+
+#### Reload: Used after ExecuteSql commands
+
+If you have an entity loading (tracked), and you use an `ExecuteSqlRaw`/`ExecuteSqlInterpolated` method to change the data on the database, your tracked entity is out of date. That situation could cause you a problem later, because EF Core doesn’t know that the values have been changed. To fix this problem, EF Core has a method called `Reload`/`ReloadAsync`, which updates your entity by rereading the database.
+
+
+
+````c#
+// Using the Reload method to refresh the content of an existing entity
+var entity = context.Books. // Loads a Book entity in the normal way
+    Single(x => x.Title == "Quantum Networking");
+var uniqueString = Guid.NewGuid().ToString();
+
+// Uses ExecuteSqlRaw to change the Description column of that same Book entity
+context.Database.ExecuteSqlRaw(
+    "UPDATE Books " +
+    "SET Description = {0} " +
+    "WHERE BookId = {1}",
+    uniqueString, entity.BookId);
+
+context.Entry(entity).Reload(); // When calling the Reload method, EF Core rereads that entity to make sure that the local copy is up to date.
+````
+
+
+
+#### GetDbConnection: Running your own SQL commands
+
+A low-level database libraries require a lot more code to be written but provide more-direct access to the database, so you can do almost anything you need to do.
+
+
+
+````c#
+// Obtaining a DbConnection from EF Core to run a Dapper SQL query
+var connection = context.Database.GetDbConnection(); // Gets a DbConnection to the database, which the micro-ORM called Dapper can use
+string query = "SELECT b.BookId, b.Title, " +
+    "(SELECT AVG(CAST([NumStars] AS float)) " +
+    "FROM dbo.Review AS r " +
+    "WHERE b.BookId = r.BookId) AS AverageVotes " +
+    "FROM Books b " +
+    "WHERE b.BookId = @bookId"; // Creates the SQL query you want to execute
+
+var bookDto = connection
+    .Query<RawSqlDto>(query, new // Calls Dapper’s Query method with the type of the returned data
+	{
+        bookId = 4 // Provides parameters to Dapper to be added to the SQL command
+    })
+    .Single();
+````
+
+
+
+### Accessing information about the entity classes and database tables
+
+EF Core provides two sources of information, one that emphasizes the entity classes and one that focuses more on the database:
+
+* `context.Entry(entity).Metadata` - Has more than 20 properties and methods that provide information on the primary key, foreign key, and navigational properties
+* `context.Model` - Has a set of properties and methods that provides a similar set of data to the `Metadata` property, but focuses more on the database tables, columns, constraints, indexes, and so on
+
+Here are some examples of how you might use this information to automate certain services:
+
+* Recursively visiting an entity class and its relationships so that you can apply some sort of action in each entity class, such as resetting its primary-key values
+* Obtaining the settings on an entity class, such as its delete behavior
+* Finding the table name and column names used by an entity class so that you can build raw SQL with the correct table and column names
+
+
+
+#### Using context.Entry(entity).Metadata to reset primary keys
+
+````c#
+// Creating an Order with two LineItems ready to be copied
+var books = context.SeedDatabaseFourBooks(); // For this test, add four books to use as test data.
+var order = new Order // Create an Order with two LinItems that you want to copy.
+{
+    CustomerId = Guid.Empty, // Set CustomerId to the default value so that the query filter lets you read the order back.
+    LineItems = new List<LineItem>
+    {
+        new LineItem
+        {
+            LineNum = 1, ChosenBook = books[0], NumBooks = 1
+        },
+        new LineItem
+        {
+            LineNum = 2, ChosenBook = books[1], NumBooks = 2
+        },
+    }
+};
+context.Add(order);
+context.SaveChanges();
+````
+
+````c#
+// Using metadata to visit each entity and reset its primary key
+public class PkResetter
+{
+    private readonly DbContext _context;
+    private readonly HashSet<object> _stopCircularLook; // Used to stop circular recursive steps
+
+    public PkResetter(DbContext context)
+    {
+        _context = context;
+        _stopCircularLook = new HashSet<object>();
+    }
+
+    public void ResetPksEntityAndRelationships(object entityToReset) // This method will recursively look at all the linked entities and reset their primary keys.
+    {
+        if (_stopCircularLook.Contains(entityToReset)) // If the method has already looked at this entity, the method exits.
+        {
+            return;
+        }
+
+        _stopCircularLook.Add(entityToReset); // Remembers that this entity has been visited by this method
+
+        // Deals with an entity that isn’t known by your configuration
+        var entry = _context.Entry(entityToReset);
+        if (entry == null)
+        {
+            return;
+        }
+
+        var primaryKey = entry.Metadata.FindPrimaryKey(); // Gets the primary-key information for this entity
+        if (primaryKey != null) // Resets every property used in the primary key to its default value
+        {
+            foreach (var primaryKeyProperty in primaryKey.Properties)
+            {
+                primaryKeyProperty.PropertyInfo
+                    .SetValue(entityToReset, GetDefaultValue(primaryKeyProperty.PropertyInfo.PropertyType));
+            }
+        }
+
+        foreach (var navigation in entry.Metadata.GetNavigations()) // Gets all the navigational properties for this entity
+        {
+            var navProp = navigation.PropertyInfo; // Gets a property that contains the navigation property
+
+            var navValue = navProp.GetValue(entityToReset); // Gets the navigation property value
+            if (navValue == null)
+            {
+                continue;
+            }
+
+            if (navigation.IsCollection) // If the navigation property is collection, visits every entity
+            {
+                foreach (var item in (IEnumerable)navValue) // Recursively visits each entity in the collection
+                {
+                    ResetPksEntityAndRelationships(item);
+                }
+            }
+            else
+            {
+                ResetPksEntityAndRelationships(navValue); // If a singleton, visits that entity
+        }
+    }
+}
+````
+
+* *Find the entity’s primary key* - `entry.Metadata.FindPrimaryKey()`
+* *Get the primary key’s properties* - `primaryKeyProperty.PropertyInfo`
+* *Find the entity’s navigational relationships* - `Metadata.GetNavigations()`
+* *Get a navigational relationship’s property* - `navigation.PropertyInfo`
+* *Checking whether the navigational property is a collection* - `navigation.IsCollection`
+
+
+
+#### Using context.Model to get database information
+
+The `context.Model` property gives you access to the `Model` of the database that EF Core builds on first use of an application’s DbContext. The `Model` contains some data similar to `context.Entry(entity).Metadata`, but it also has specific information of the database schema. Therefore, if you want to do anything with the database side, `context.Model` is the right information source to use.
+
+If you deleted a group of dependent entities via EF Core, you would typically read in all the entities to delete, and EF Core would delete each entity with a separate SQL command. The method in the following listing produces a single SQL command that deletes all the dependent entities in one SQL command without the need to read them in. This process, therefore, is much quicker than EF Core, especially on large collections.
+
+````c#
+// Using context.Model to build a quicker dependent delete
+public string BuildDeleteEntitySql<TEntity>(DbContext context, string foreignKeyName) where TEntity : class // This method provides a quick way to delete all the entities linked to a principal entity.
+{
+    var entityType = context.Model.FindEntityType(typeof(TEntity)); // Gets the Model information for the given type, or null if the type isn’t mapped to the database
+    var fkProperty = entityType?.GetForeignKeys()
+        .SingleOrDefault(x => x.Properties.Count == 1
+                         && x.Properties.Single().Name == foreignKeyName)
+        ?.Properties.Single(); // Looks for a foreign key with a single property with the given name
+
+    if (fkProperty == null) // If any of those things doesn’t work, the code throws an exception.
+    {
+        throw new ArgumentException($"Something wrong!");
+    }
+
+    var fullTableName = entityType.GetSchema() == null
+        ? entityType.GetTableName()
+        : $"{entityType.GetSchema()}.{entityType.GetTableName()}"; // Forms the full table name, with a schema if required
+
+    return $"DELETE FROM {fullTableName} " +
+        $"WHERE {fkProperty.GetColumnName()}" // Forms the main part of the SQL code
+        + " = {0}"; // Adds a parameter that the ExecuteSqlRaw can check
+}
+````
+
+Having found the right entity/table and checked that the foreign key name matches, you can build the SQL. As the listing shows, you have access to the table’s name and schema, plus the column name of the foreign key. The following code snippet shows the output of the `BuildDeleteEntitySql` method with a `Review` entity class for the `TEntity` and a foreign-key name of `BookId`:
+
+````c#
+DELETE FROM Review WHERE BookId = {0}
+````
+
+The SQL command is applied to the database by calling the `ExecuteSqlRaw` method, with the SQL string as the first parameter and the foreign-key value as the second parameter.
+
+
+
+### Dynamically changing the DbContext’s connection string
+
+It provides a method called `SetConnectionString` that allows you to change the connection string at any time so that you can change the database you are accessing at any time.
+
+
+
+![](./diagrams/images/11_03_dynamically_changing_connectioon_string.png)
+
+
+
+EF Core made one other important change: the connection string can be `null` when you first create the application’s DbContext. The connection string can be `null` until you need to access the database. This feature is useful because on startup, there would be no tenant information, so the connection string would be `null`.
+
+
+
+### Handling database connection problems
+
+With relational database servers, a database access can fail because the connection times out or certain transient errors occur. EF Core has an execution strategy feature that allows you to define what should happen when a timeout occurs, how many timeouts are allowed, and so on.
+
+
+
+````c#
+// Setting up a DbContext with the standard SQL execution strategy
+var connection = @"Server=(localdb)\mssqllocaldb;Database=…";
+var optionsBuilder =
+    new DbContextOptionsBuilder<EfCoreContext>();
+
+optionsBuilder.UseSqlServer(connection,
+	option => option.EnableRetryOnFailure());
+var options = optionsBuilder.Options;
+
+using (var context = new EfCoreContext(options))
+{
+	… normal code to use the context
+````
+
+Normal EF Core queries or `SaveChanges` calls will automatically be retried without your doing anything. Each query and each call to `SaveChanges` is retried as a unit if a transient failure occurs. But database transactions need a little more work.
+
+
+
+#### Handling database transactions with EF Core’s execution strategy
+
+The execution strategy works by rolling back the whole transaction if a transient failure occurs and then replaying each operation in the transaction; each query and each call to `SaveChanges` is retried as a unit. For all the operations in the transaction to be retried, the execution strategy must be in control of the transaction code.
+
+
+````c#
+// Writing transactions when you’ve configured an execution strategy
+var connection = @"Server=(localdb)\mssqllocaldb;Database=…";
+var optionsBuilder =
+    new DbContextOptionsBuilder<EfCoreContext>();
+
+optionsBuilder.UseSqlServer(connection,
+	option => option.EnableRetryOnFailure()); // Configures the database to use the SQL execution strategy, so you have to handle transactions differently
+
+using (var context = new Chapter09DbContext(options))
+{
+    var strategy = context.Database
+        .CreateExecutionStrategy(); // Creates an IExecutionStrategy instance, which uses the execution strategy you configured the DbContext with
+    strategy.Execute(() => // The important thing is to make the whole transaction code into an Action method it can call.
+	{
+        try
+        {
+            using (var transaction = context
+                   .Database.BeginTransaction()) // The rest of the transaction setup and running your code are the same.
+            {
+                context.Add(new MyEntity());
+                context.SaveChanges();
+                context.Add(new MyEntity());
+                context.SaveChanges();
+                transaction.Commit();
+            }
+        }
+        catch (Exception e)
+        {
+            //Error handling to go here
+            throw;
+        }
+    });
+}
+````
+
+
+
+#### Altering or writing your own execution strategy
+
+If there’s an existing execution strategy for your database provider (such as SQL Server), you can change some options, such as the number of retries or the SQL errors to be retried.
+
+If you want to write your own execution strategy, you need to implement a class that inherits the interface `IExecutionStrategy`.
+
+
+````c#
+// Configuring your own execution strategy into your DbContext
+var connection = this.GetUniqueDatabaseConnectionString();
+var optionsBuilder =
+    new DbContextOptionsBuilder<Chapter09DbContext>();
+
+optionsBuilder.UseSqlServer(connection,
+	options => options.ExecutionStrategy(
+		p => new MyExecutionStrategy()));
+
+using (var context = new Chapter09DbContext(optionsBuilder.Options))
+{
+    … etc.
+````
+
+
+
+### Summary
+
+* You can use EF Core’s entity `State` property, with a little help from a perproperty `IsModified` flag, to define what will happen to the data when you call `SaveChanges`.
+* You can affect the `State` of an entity and its relationships in several ways. You can use the `DbContext`’s methods `Add`, `Remove`, `Update`, `Attach`, and `TrackGraph`; set the `State` directly; and track modifications.
+* The `DbContext`’s `ChangeTracker` property provides several ways to detect the `State` of all the entities that have changed. These techniques are useful for marking entities with the date when an entity was created or last updated, or logging every `State` change for any of the tracked entities.
+* The `Database` property has methods that allow you to use raw SQL command strings in your database accesses.
+* You can access information about the entities and their relationships via the `Entry(entity).Metadata` and the database structure via the `Model` property.
+* EF Core contains a system that allows you to provide a retry capability. This system can improve reliability by retrying accesses if there are connection or transient errors in your database.
+
+
+
+
+
+## 12. Using entity events to solve business problems
+
+* Understanding the types of events that work well with EF Core
+* Using domain events to trigger extra business rules
+* Using integration events to synchronize two parts of your application
+* Implementing an Event Runner and then improving it
+
