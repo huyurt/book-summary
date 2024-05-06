@@ -8687,3 +8687,720 @@ using (var context = new Chapter09DbContext(optionsBuilder.Options))
 * Using integration events to synchronize two parts of your application
 * Implementing an Event Runner and then improving it
 
+
+
+### Using events to solve business problems
+
+#### Example of using domain events
+
+The client’s company sells bespoke constructions in the United States, and every project starts with a quote to send to the client. The construction could be anywhere in the United States, and the state where the work is done defines the sales tax. As a result, the sales tax had to be recalculated when any of the following things happened:
+
+* *A new quote was created.* By default, a new quote doesn’t have a location, so the business rule was to give it the highest sales tax until the location was specified.
+* *The job location was set or changed.* The sales tax had to be recalculated, and it was the sales team’s job to select a location from a list of known locations.
+* *A location’s address changed.* All the quotes linked to that location had to be recalculated to make sure that the sales tax was correct.
+
+A change in the `Location` entity class created a domain event to trigger an event handler that recalculated the sales tax for a quote (or quotes). Each domain event needed a slightly different piece of business logic, plus a common service to calculate the tax. An example of what might happen if the address of a location changes:
+
+
+
+![](./diagrams/images/12_01_example_of_using_domain_events.png)
+
+
+
+#### Example of integration events
+
+Precalculate the data you need to show to the user and store it in another database used only for displaying data to the user. This approach improves read performance and scalability.
+
+The normal SQL commands for the Book App, for example, calculate the average star rating of a book by dynamically calculating the average across all the `Book`’s `Reviews`. That technique works fine for a small number of `Book`s and `Review`s, but with large numbers, sorting by average review ratings can be slow. You will use a Query Responsibility Segregation (CQRS) database pattern to store the precalculated data in a separate, read-side database.
+
+
+
+![](./diagrams/images/12_02_example_of_integration_events.png)
+
+
+
+### Defining where domain events and integration events are useful
+
+DDD talks a lot about a bounded context, which represents a defined part of software where particular terms, definitions, and rules apply in a consistent way. A bounded context is about applying the Separation of Concerns (SoC) principle at the macro level. You can categorize the two event types as follows:
+
+* The sales-tax example is referred to as a domain event because it is working exclusively within a single bounded context.
+* The CQRS example is referred to as an integration event because it crosses from one bounded context to another.
+
+
+
+### Where might you use events with EF Core?
+
+The answer is best provided by some examples:
+
+* Setting or changing an `Address` triggers a recalculation of the sales-tax code of a `Quote`.
+* Creating an `Order` triggers a check on reordering `Stock`.
+* Updating a `Book` triggers an update of that `Book`’s `Projection` on another database.
+* Receiving a `Payment` that pays off the debt triggers the closing of the `Account`.
+* Sending a `Message` to an `external service`.
+
+
+
+#### Pro: Follows the SoC design principle
+
+The event systems already described provide a way to run separate business rules on a change in an entity class. In the location-change/sales-tax example, the two entities are linked in a nonobvious way; changing the location of a job causes a recalculation of the sales tax for any linked quotes. When you apply the SoC principle, these two business rules should be separated.
+
+You could create some business logic to handle both business rules, but doing so would complicate a simple update of properties in an address. By triggering an event if the `State`/`County` properties are changed, you can keep the simple address update and let the event handle the second part.
+
+
+
+#### Pro: Makes database updates robust
+
+The design of the code that handles domain events is such that the original change that triggers the event and the changes applied to entity classes via the called event handler are saved in the same transaction.
+
+
+
+![](./diagrams/images/12_03_makes_database_updates_robust.png)
+
+
+
+If the integration event fails, the database update will be rolled back, ensuring that the local database and the external service and different database are in step.
+
+
+
+#### Con: Makes your application more complex
+
+One of the downsides of using events is that your code is going to be more complicated. You will create your events, add the events to your entity classes, and write your event handlers, which requires more code than building services for your business logic.
+
+But the trade-off of events that need more code is that the two business logic parts are decoupled. Changes to the address become a simple update, for example, while the event makes sure that the tax code is recalculated. This decoupling reduces the business complexity that the developer has to deal with.
+
+
+
+#### Con: Makes following the flow of the code more difficult
+
+It can be hard to understand code that you didn’t write or wrote a while back. You can do the same thing when you use events, but that technique does add one more level of indirection before you get to the code. For the sales-tax-change example, you would need to click the `LocationChangedEvent` class to find the `LocationChangedEventHandler` that has the business code you’re looking for - only one more step, but a step you don’t need if you don’t use events.
+
+
+
+### Implementing a domain event system with EF Core
+
+Two `Quote`s are linked to location, so their `SalesTax` property should be updated to the correct sales tax at that location.
+To implement this domain event system, add the following code to your application:
+
+1. You create some domain events classes to be triggered.
+2. Add code to the entity classes to hold the domain events.
+3. Alter the code in the entity class to detect a change on which you want to trigger an event.
+4. Create some event handlers that are matched to the events. These event handlers may alter the calling entity class or access the database or business logic to execute the business rules it is designed to handle.
+5. Build an Event Runner that finds and runs the correct event handler that matches each found event.
+6. Add the Event Runner to the DbContext, and override the `SaveChanges` (and `SaveChangesAsync`) methods in your application’s DbContext.
+7. When the Event Runner has finished, run the base `SaveChanges`, which updates the database with the original changes and any further changes applied by the event handlers.
+8. Register the Event Runner and all the event handlers.
+
+
+
+![](./diagrams/images/12_04_implementing_domain_event_system.png)
+
+
+
+#### Create some domain events classes to be triggered
+
+There are two parts to creating an event. First, an event must have an interface that allows the Event Runner to refer to it. This interface can be empty, representing an event.
+
+Each application event contains data that is specific to the business needs. The following listing shows the `LocationChangedEvent` class, which needs only the `Location` entity class.
+
+````c#
+// The LocationChangedEvent class, with data that the event handler needs
+public class LocationChangedEvent : IDomainEvent // The event class must inherit the IDomainEvent. The Event Runner uses the IDomainEvent to represent every domain event.
+{
+    public LocationChangedEvent(Location location)
+    {
+        Location = location;
+    }
+
+    public Location Location { get; } // The event handler needs Location to do the Quote updates.
+}
+````
+
+Each event should send over the data that the event handler needs to do its job. Then it is the event handler’s job to run some business logic, using the data provided by the event.
+
+
+
+#### Add code to the entity classes to hold the domain events
+
+The entity class must hold a series of events. These events aren’t written to the database but are there for the Event Runner to read via a method.
+
+
+
+````c#
+// The class that entity classes inherit to create events
+public class AddEventsToEntity : IEntityEvents // The IEntityEvents defines the GetEventsThenClear method for the Event Runner.
+{
+    private readonly List<IDomainEvent> _domainEvents = new List<IDomainEvent>(); // The list of IDomainEvent events is stored in a field.
+
+    // The AddEvent is used to add new events to the _domainEvents list.
+    public void AddEvent(IDomainEvent domainEvent)
+    {
+        _domainEvents.Add(domainEvent);
+    }
+
+    // This method is called by the Event Runner to get the events and then clear the list.
+    public ICollection<IDomainEvent> GetEventsThenClear()
+    {
+        var eventsCopy = _domainEvents.ToList();
+        _domainEvents.Clear();
+        return eventsCopy;
+    }
+}
+````
+
+The entity class can call the `AddEvent` method, and the Event Runner can get the domain events via the `GetEventsThenClear` method. Getting the domain events also clears the events in the entity class, because these messages will cause an event handler to be executed, and you want the event handler to run only once per domain event. Domain events are messages passed to the Event Runner via the entity classes, and you want a message to be used only once.
+
+
+
+#### Alter the entity class to detect a change to trigger an event on
+
+An event is normally something being changed or something reaching a certain level. EF Core allows you to use backing fields, which make it easy to capture changes to scalar properties.
+
+
+
+````c#
+// The Location entity class creates a domain event if the State is changed
+public class Location : AddEventsToEntity // This entity class inherits the AddEventsToEntity to gain the ability to use events.
+{
+    // These normal properties don’t generate events when they are changed.
+    public int LocationId { get; set; }
+    public string Name { get; set; }
+
+    private string _state; // The backing field contains the real value of the data.
+
+    public string State // The setter is changed to send a LocationChangedEvent if the State value changes.
+    {
+        get => _state;
+        set // This code will add a LocationChangedEvent to the entity class if the State value changes.
+        {
+            if (value != _state)
+            {
+                AddEvent(new LocationChangedEvent(this));
+            }
+            _state = value;
+        }
+    }
+}
+````
+
+
+
+Collection navigational properties are a little harder to check for changes, but DDD-styled entity classes make this check much simpler.
+
+
+
+#### Create event handlers that are matched to the domain events
+
+Event handlers are key to using events in your application. Each event handler contains some business logic that needs to be run when the specific event is found.
+
+
+
+````c#
+// The event handler updates the sales tax on Quotes linked to this Location
+public class LocationChangedEventHandler : // This class must be registered as a service via DI.
+IEventHandler<LocationChangedEvent> // Every event handler must have the interface IEventHandler<T>, where T is the event class type.
+{
+    // This specific event handler needs two classes registered with DI.
+    private readonly DomainEventsDbContext _context;
+    private readonly ICalcSalesTaxService _taxLookupService;
+
+    // The Event Runner will use DI to get an instance of this class and will fill in the constructor parameters.
+    public LocationChangedEventHandler(DomainEventsDbContext context, ICalcSalesTaxService taxLookupService)
+    {
+        _context = context;
+        _taxLookupService = taxLookupService;
+    }
+
+    public void HandleEvent(LocationChangedEvent domainEvent) // The method from the IEventHandler<T> that the Event Runner will execute
+    {
+        var salesTaxPercent = _taxLookupService
+            .GetSalesTax(domainEvent.Location.State); // Uses another service to calculate the right sales tax
+
+        // Sets the SalesTax on every Quote that is linked to this Location
+        foreach (var quote in _context.Quotes.Where(
+            x => x.WhereInstall == domainEvent.Location))
+        {
+            quote.SalesTaxPercent = salesTaxPercent;
+        }
+    }
+}
+````
+
+The key point here is that the event handler is registered as a service so that the Event Runner can get an instance of the event handler class via dependency injection (DI). The event handler class has the same access to DI services that normal business logic does. In this case, the `LocationChangedEventHandler` injects the application’s DbContext and the `ICalcSalesTaxService` service.
+
+
+
+#### Build an Event Runner that finds and runs the correct event handler
+
+The Event Runner is the heart of the event system: its job is to match each event to an event handler and then invoke the event handler’s method, providing the event as a parameter. This process uses NET Core’s `ServiceProvider` to get an instance of the event handler, which allows the event handlers to access other services.
+
+
+
+![](./diagrams/images/12_05_event_runner.png)
+
+
+
+````c#
+// The Event Runner that is called from inside the overridden SaveChanges
+public class EventRunner : IEventRunner // The Event Runner needs an interface so that you can register it with the DI.
+{
+    // The Event Runner needs the ServiceProvider to get an instance of the event handlers.
+    private readonly IServiceProvider _serviceProvider;
+
+    public EventRunner(IServiceProvider serviceProvider)
+    {
+        _serviceProvider = serviceProvider;
+    }
+
+    public void RunEvents(DbContext context)
+    {
+        var allEvents = context
+            .ChangeTracker.Entries<IEntityEvents>()
+            .SelectMany(x => x.Entity.GetEventsThenClear()); // Reads in all the events and clears the entity events to stop duplicate events
+
+        foreach (var domainEvent in allEvents) // Loops through each event found
+        {
+            // Gets the interface type of the matching event handler
+            var domainEventType = domainEvent.GetType();
+            var eventHandleType = typeof(IEventHandler<>)
+                .MakeGenericType(domainEventType);
+
+            // Uses the DI provider to create an instance of the event handler and returns an error if one is not found
+            var eventHandler = _serviceProvider.GetService(eventHandleType);
+            if (eventHandler == null)
+            {
+                throw new InvalidOperationException($"Could not find an event handler");
+            }
+
+            // Creates the EventHandlerRunner that you need to run the event handler
+            var handlerRunnerType = typeof(EventHandlerRunner<>)
+                .MakeGenericType(domainEventType);
+            var handlerRunner = ((EventHandlerRunner)
+				Activator.CreateInstance(
+                    handlerRunnerType, eventHandler));
+
+            handlerRunner.HandleEvent(domainEvent); // Uses the EventHandlerRunner to run the event handler
+        }
+    }
+}
+````
+
+The following listing shows the `EventHandlerRunner` and `EventHandlerRunner<T>` classes. You need these two classes because the definition of an event handler is generic, so you can’t call it directly. You get around this problem by creating a class that takes the generic event handler in its constructor and has a nongeneric method (the abstract class called `EventHandlerRunner`) that you can call.
+
+````c#
+// The EventHandlerRunner class that runs the generic-typed event handler
+// By defining a nongeneric method, you can run the generic event handler.
+internal abstract class EventHandlerRunner
+{
+    public abstract void HandleEvent(IDomainEvent domainEvent);
+}
+
+internal class EventHandlerRunner<T> : EventHandlerRunner // Uses the EventHandlerRunner<T> to define the type of the EventHandlerRunner
+    where T : IDomainEvent
+{
+    // The EventHandlerRunner class is created with an instance of the event handler to run.
+    private readonly IEventHandler<T> _handler;
+    
+    public EventHandlerRunner(IEventHandler<T> handler)
+    {
+        _handler = handler;
+    }
+
+    // Method that overrides the abstract class's HandleEvent method
+    public override void HandleEvent(IDomainEvent domainEvent)
+    {
+        _handler.HandleEvent((T)domainEvent);
+    }
+}
+````
+
+
+
+#### Override SaveChanges and insert the Event Runner before SaveChanges is called
+
+Next, you override `SaveChanges` and `SaveChangesAsync` so that the Event Runner is run before the base `SaveChanges` and `SaveChangesAsync` run. Any changes the event handlers make to entities are saved with the original changes that caused the events. This point is really important: both the changes made to entities by your nonevent code are saved with any changes made by your event handler code. If a problem occurs with the data being saved to the database (a concurrency exception was thrown, for example), neither of the changes would be written to the database, so the two types of entity changes - nonevent code changes and event-handler code changes - won’t become CQRS out of step.
+
+
+
+````c#
+// Your application’s DbContext with SaveChanges overridden
+public class DomainEventsDbContext : DbContext
+{
+    private readonly IEventRunner _eventRunner; // Holds the Event Runner that is injected by DI via the class's constructor
+
+    // The constructor now has a second parameter DI fills in with the Event Runner.
+    public DomainEventsDbContext(DbContextOptions<DomainEventsDbContext> options, IEventRunner eventRunner = null)
+        : base(options)
+    {
+        _eventRunner = eventRunner;
+    }
+
+    //… DbSet<T> left out
+
+    public override int SaveChanges(bool acceptAllChangesOnSuccess) // You override SaveChanges so that you can run the Event Runner before the real SaveChanges.
+    {
+        _eventRunner?.RunEvents(this); // Runs the Event Runner
+        return base.SaveChanges(acceptAllChangesOnSuccess); // Runs the base.SaveChanges
+    }
+
+    //… overridden SaveChangesAsync left out
+}
+````
+
+
+
+#### Register the Event Runner and all the event handlers
+
+The last part is registering the Event Runner and the event handlers with the DI provider. The Event Runner relies on the DI to provide an instance of your event handlers, using their interfaces; also, your application’s DbContext needs the Event Runner injected by DI into the `IEventRunner` parameter of its constructor. When Event Runner and the event handlers are registered, along with any services that the event handlers need (such as the sales tax calculator service), the Event Runner will work.
+
+
+
+````c#
+// Manually registering the Event Runner and event handlers In ASP.NET Core
+public void ConfigureServices(IServiceCollection services) // You register interfaces/classes with the NET dependency injection provider—in this case, in a ASP.NET Core app.
+{
+    //… other registrations left out
+    services.AddTransient<IEventRunner, EventRunner>(); // Registers the Event Runner, which will be injected into your application’s DbContext
+
+    // Registers all your event handlers
+    services.AddTransient<IEventHandler<LocationChangedEvent>, LocationChangedEventHandler>();
+    services.AddTransient<IEventHandler<QuoteLocationChangedEvent>, QuoteLocationChangedEventHandler>();
+
+    services.AddTransient<ICalcSalesTaxService, CalcSalesTaxService>(); // You need to register any services that your event handlers will use.
+}
+````
+
+Although manual registration works, a better way is to automate finding and registering the event handlers.
+
+````c#
+services.RegisterEventRunnerAndHandlers(
+    Assembly.GetAssembly(
+        typeof(LocationChangedEventHandler)));
+````
+
+
+
+````c#
+// Automatically registering the Event Runner and your event handlers
+public static void RegisterEventRunnerAndHandlers(
+    this IServiceCollection services, // The method needs the NET Core’s service collection to add to.
+    params Assembly[] assembliesToScan) // You provide one or more assemblies to scan.
+{
+    services.AddTransient<IEventRunner, EventRunner>(); // Registers the Event Runner
+    
+    // Calls a method to find and register event handler in an assembly
+    foreach (var assembly in assembliesToScan)
+    {
+        services.RegisterEventHandlers(assembly);
+    }
+}
+
+// Finds and registers all the classes that have the IEventHandler<T> interface
+private static void RegisterEventHandlers(
+    this IServiceCollection services,
+    Assembly assembly)
+{
+    var allGenericClasses = assembly.GetExportedTypes()
+        .Where(y => y.IsClass && !y.IsAbstract
+               && !y.IsGenericType && !y.IsNested); // Finds all the classes that could be an event handler in the assembly
+    var classesWithIHandle =
+        from classType in allGenericClasses
+        let interfaceType = classType.GetInterfaces()
+	        .SingleOrDefault(y =>
+				y.IsGenericType &&
+                y.GetGenericTypeDefinition() ==
+					typeof(IEventHandler<>))
+        where interfaceType != null
+        select (interfaceType, classType); // Finds all the classes that have the IEventHandler<T> interface, plus the interface type
+
+    // Registers each class with its interface
+    foreach (var tuple in classesWithIHandle)
+    {
+        services.AddTransient(
+            tuple.interfaceType, tuple.classType);
+    }
+}
+````
+
+
+
+### Implementing an integration event system with EF Core
+
+Integration events are simpler to implement than domain events but harder to design because they work across bounded contexts.
+
+The core tries to update a CQRS read-side database only if the SQL update succeeded, and it commits the SQL update only if the CQRS read-side database was successful; that way, the two databases contain the same data. You can generalize this example into two parts, both of which must work for the action to be successful:
+
+* Don’t send the integration event if the database update didn’t work.
+* Don’t commit the database update unless the integration event worked.
+
+Suppose that you are building a new service that sends customers their orders of Lego bricks by courier on the same day. You must be sure that your warehouse has the items in stock and has a courier that can deliver the order immediately.
+
+
+
+![](./diagrams/images/12_06_implementing_integration_event_system.png)
+
+
+
+You have two options for detecting and handling your integration event in your application’s DbContext:
+
+* You inject the service directly into your application’s DbContext, which works out for itself whether a specific event has happened by detecting the `State` of the entities. A second part is called only if the first method says that it needs to be called.
+* You could use an approach similar to the Event Runner that you used for domain events, but a different event type is run within a transaction after the base `SaveChanges` is called.
+
+In most cases, you won’t have many integration events, so the first option is quicker; it bypasses the event system you added to the entity for the domain events and does its own detection of the event. This approach is simple and keeps all the code together, but it can become cumbersome if you have multiple events to detect and process.
+
+The second option is an expansion of the Event Runner and domain events, which uses a similar creation of an integration event when something changes in the entity. In this specific case, the code will create an integration event when a new `Order` is created.
+
+Both options require an event handler. What goes in the event handler is the business logic needed to communicate with the system/code and to understand its responses. The first option was used in the Lego example, where the event handler detected the event itself. You need to add two sections of code to implement this example:
+
+* Build a service that communicates with the warehouse.
+* Override `SaveChanges` (and `SaveChangesAsync`) to add code to create the integration event and its feedback.
+
+
+
+#### Building a service that communicates with the warehouse
+
+In the Lego example, the design suggests that the website where customers place orders is separate from the warehouse, which means some form of communication, maybe via some RESTful API. In this case, you would build a class that communicates with the correct warehouse and returns either a success or a series of errors.
+
+
+
+````c#
+// The Warehouse event handler that both detects and handles the event
+public class WarehouseEventHandler : IWarehouseEventHandler
+{
+    private Order _order;
+
+    public bool NeedsCallToWarehouse(DbContext context) // This method detects the event and returns true if there is an Order to send to the warehouse.
+    {
+        var newOrders = context.ChangeTracker
+            .Entries<Order>()
+            .Where(x => x.State == EntityState.Added)
+            .Select(x => x.Entity)
+            .ToList(); // Obtains all the newly created Orders
+
+        if (newOrders.Count > 1) // The business logic handles only one Order per SaveChanges call.
+        {
+            throw new Exception("Can only process one Order at a time");
+        }
+
+        if (!newOrders.Any()) // If there isn’t a new Order, returns false
+        {
+            return false;
+        }
+
+        _order = newOrders.Single();
+        return true; // If there is an Order, retains it and returns true
+    }
+
+    public List<string> AllocateOrderAndDispatch() // This method will communicate with the warehouse and returns any errors the warehouse sends back.
+    {
+        var errors = new List<string>();
+
+        // Adds the code to communicate with the warehouse
+        //... code to communicate with warehouse
+
+        return errors; // Returns a list of errors. If the list is empty, the code was successful.
+    }
+}
+````
+
+
+
+#### Overriding SaveChanges to handle the integration event
+
+You are using an integration event implementation that detects the event itself, rather than adding an event to the entity class, so the code inside the overridden `SaveChanges` and `SaveChangesAsync` is specific to the integration event.
+
+
+
+````c#
+// DbContext with overridden SaveChanges and Warehouse event handler
+public class IntegrationEventDbContext : DbContext
+{
+    private readonly IWarehouseEventHandler _warehouseEventHandler; // Holds the instance of the code that will communicate with the external warehouse
+
+    public IntegrationEventDbContext(
+        DbContextOptions<IntegrationEventDbContext> options,
+        IWarehouseEventHandler warehouseEventHandler) // Injects the warehouse event handler via DI
+        : base(options)
+    {
+        _warehouseEventHandler = warehouseEventHandler;
+    }
+
+    public DbSet<Order> Orders { get; set; }
+    public DbSet<Product> Products { get; set; }
+
+    public override int SaveChanges(bool acceptAllChangesOnSuccess) // Overrides SaveChanges to include the warehouse event handler
+    {
+        if (!_warehouseEventHandler.NeedsCallToWarehouse(this)) // If the event handler doesn’t detect an event, it does a normal SaveChanges.
+        {
+            return base.SaveChanges(acceptAllChangesOnSuccess);
+        }
+
+        using(var transaction = Database.BeginTransaction()) // There is an integration event, so a transaction is opened.
+        {
+            var result = base.SaveChanges(acceptAllChangesOnSuccess); // Calls the base SaveChange to save the Order
+            var errors = _warehouseEventHandler
+                .AllocateOrderAndDispatch(); // Calls the warehouse event handler that communicates with the warehouse
+
+            if (errors.Any()) // If the warehouse returned errors, throws an OutOfStockException
+            {
+                throw new OutOfStockException(string.Join('.', errors));
+            }
+
+            transaction.Commit(); // If there were no errors, the Order is committed to the database.
+            return result; // Returns the result of the SaveChanges
+        }
+    }
+    
+    //… overridden SaveChangesAsync left out
+}
+````
+
+
+
+### Improving the domain event and integration event implementations
+
+#### Generalizing events: Running before, during, and after the call to SaveChanges
+
+Another event type might be useful - one that runs when `SaveChanges` or `SaveChangesAsync` has finished successfully. You could send an email when you are sure that an Order has been checked and successfully added to the database. That example uses three event types, which we can call *Before* (domain events), *During* (integration events), and *After* events.
+
+
+
+![](./diagrams/images/12_07_generalizing_events.png)
+
+
+
+To implement the Before, During, and After event system, you must add two more Event Runners: one called within a transaction to handle the integration events, and one after `SaveChanges`/`SaveChangesAsync` has finished successfully. You also need three event-handler interfaces - Before, During, and After - so that the correct event handler is run at the same time.
+
+
+
+#### Adding support for async event handlers
+
+In many of today’s multiuser applications, async methods will improve scalability, so you need to have async versions of the event handlers. Adding an async method requires an extra event handler interface for an async event handler version. Also, the Event Runner code must be altered to find an async version of the event handler when the `SaveChangesAsync` is called.
+
+
+
+````c#
+// The original RunEvents method updated to run async event handlers
+public async Task RunEventsAsync(DbContext context) // The RunEvent becomes an async method, and its name is changed to RunEventAsync.
+{
+    var allEvents = context
+        .ChangeTracker.Entries<IEntityEvents>()
+        .SelectMany(x => x.Entity.GetEventsThenClear());
+
+    foreach (var domainEvent in allEvents)
+    {
+        var domainEventType = domainEvent.GetType();
+        var eventHandleType = typeof(IEventHandlerAsync<>) // The code is now looking for a handle with an async type.
+            .MakeGenericType(domainEventType);
+
+        var eventHandler = _serviceProvider.GetService(eventHandleType);
+        if (eventHandler == null)
+        {
+            throw new InvalidOperationException("Could not find an event handler");
+        }
+
+        var handlerRunnerType = typeof(EventHandlerRunnerAsync<>) // Needs a async EventHandlerRunner to run the event handler
+            .MakeGenericType(domainEventType);
+        var handlerRunner = ((EventHandlerRunnerAsync) // Is cast to a async method
+			Activator.CreateInstance(
+                handlerRunnerType, eventHandler));
+
+        await handlerRunner.HandleEventAsync(domainEvent); // Allows the code to run the async event handler
+    }
+}
+````
+
+
+
+#### Handling multiple event handers for the same event
+
+You might define more than one event handler for an event. Your `LocationChangedEvent`, for example, might have one event handler to recalculate the tax code and another event handler to update the company’s map of ongoing projects. In the current implementations of the Event Runners, the .NET Core DI method `GetService` would throw an exception because it can return only one service. The solution is simple. Use the .NET Core DI method `GetServices` method and then loop through each event handler found:
+
+````c#
+var eventHandlers = _serviceProvider.GetServices(eventHandleType);
+if (!eventHandlers.Any())
+{
+    throw new InvalidOperationException("Could not find an event handler");
+}
+
+foreach(var eventHandler in eventHandlers)
+{
+    //… use code from listing 12.5 that runs a single event handler
+````
+
+
+
+#### Handling event sagas in which one event kicks off another event
+
+One event could cause a new event to be created. The `LocationChangedEvent` event updated the `SalesTax`, which, in turn, caused a `QuotePriceChangeEvent`. These updates are referred to as *event sagas* because the business logic consists of a series of steps that must be executed in a certain order for the business rule to be completed.
+
+Handling event sagas requires you to add a looping arrangement that looks for events being created by other events.
+
+
+
+````c#
+// Adding looping on events to the RunEvents method in the Event Runner
+public void RunEvents(DbContext context)
+{
+    bool shouldRunAgain; // Controls whether the code should loop around again to see whether there are any new events
+    int loopCount = 1; // Counts how many times the Event Runner loops around to check for more events
+    do // This do/while code keeps looping while shouldRunAgain is true.
+    {
+        var allEvents = context
+            .ChangeTracker.Entries<IEntityEvents>()
+            .SelectMany(x => x.Entity.GetEventsThenClear());
+
+        shouldRunAgain = false; // shouldRunAgain is set to false. If there are no events, it will exit the do/while loop.
+        foreach (var domainEvent in allEvents)
+        {
+            shouldRunAgain = true; // There are events, so shouldRunAgain is set to true.
+
+            var domainEventType = domainEvent.GetType();
+            var eventHandleType = typeof(IEventHandler<>)
+                .MakeGenericType(domainEventType);
+
+            var eventHandler = _serviceProvider.GetService(eventHandleType);
+            if (eventHandler == null)
+            {
+                throw new InvalidOperationException("Could not find an event handler");
+            }
+
+            var handlerRunnerType = typeof(EventHandlerRunner<>)
+                .MakeGenericType(domainEventType);
+            var handlerRunner = ((EventHandlerRunner)
+				Activator.CreateInstance(
+                    handlerRunnerType, eventHandler));
+
+            handlerRunner.HandleEvent(domainEvent);
+        }
+
+        // This check catches an event handler that triggers a circular set of events.
+        if (loopCount++ > 10)
+        {
+            throw new Exception("Looped to many times");
+        }
+    } while (shouldRunAgain); // Stops looping when there are no events to handle
+}
+````
+
+
+
+### Summary
+
+* A domain event class carries a message that is held inside an entity class. The domain event defines the type of event and carries event-specific data, such as what data has changed.
+* Event handlers contain business logic that is specific to a domain event. Their job is to run the business logic, using the domain event data to guide what it does.
+* The domain events version of the `SaveChanges` and `SaveChangesAsync` methods captures all the domain events in the tracked-entities classes and then runs matching event handlers.
+* The integration events versions of the `SaveChanges` and `SaveChangesAsync` methods use a transaction to ensure that both the database and integration event handler succeed before the database is updated. This requirement allows you to synchronize two separate parts of your application.
+
+
+
+
+
+## 13. Domain-Driven Design and other architectural approaches
+
+* Three architectural approaches
+* The differences between normal and DDD-styled entity classes
+* Eight ways you can apply DDD to your entity classes
+* Three ways to handle performance problems when using DDD
+
+
+
