@@ -9404,3 +9404,762 @@ public void RunEvents(DbContext context)
 
 
 
+### The Book App’s evolving architecture
+
+
+
+![](./diagrams/images/13_01_the_book_app_architecture.png)
+
+
+
+#### Building a modular monolith to enforce the SoC principles
+
+
+
+![](./diagrams/images/13_02_moduler.png)
+
+
+
+#### Using DDD principles both architecturally and on the entity classes
+
+DDD details many approaches for defining, building, and managing software applications.
+
+* The main rule is that a DDD entity is in total control of the data in that entity: all the properties are made read-only, and there are constructors/methods to create/update the entities’ data. Giving the entity total control of its data makes your entity classes much more powerful; each entity class has clearly defined constructors/methods for the developer to use.
+* DDD says that entities, which contain both data and domain (business) logic, should not know anything about how the entities are persisted to a database.
+* DDD talks about bounded contexts, which separate your application into distinct parts. The idea is to create bounded contexts that are separate so that they are easier to understand, and then set up clearly defined communication between the bounded contexts.
+
+
+
+### Altering the Book App entities to follow the DDD approach
+
+Here are the steps in the process of changing your code to the DDD approach:
+
+* Changing the properties in the `Book` entity to read-only
+* Updating the `Book` entity properties via methods in the entity class
+* Controlling how the `Book` entity is created
+* Understanding the differences between an entity and a value object
+* Minimizing the relationships between entity classes
+* Grouping entity classes (DDD name: *aggregates*)
+* Deciding when the business logic shouldn’t be run inside an entity
+* Applying DDD’s bounded context to your application’s DbContext
+
+
+
+#### Changing the properties in the Book entity to read-only
+
+DDD says that the entity class is in charge of the data it contains; therefore, it must control how the data is created or changed. For the entity class to control its data, you make all the properties in the entity read-only. After that, a developer can set the data in the entity class only via the class’s constructor or via the methods in the entity class. The entity can ensure that it is always in a valid state.
+
+
+
+![](./diagrams/images/13_03_non_ddd_vs_ddd.png)
+
+
+
+````c#
+// Making the Book entity class’s properties read-only
+public class Book
+{
+    // Noncollection properties have their setter set to private.
+    public int BookId { get; private set; }
+    public string Title { get; private set; }
+    //… other non-collection properties left out
+
+    // A collection is stored in a backing field.
+    private HashSet<Review> _reviews;
+    // The property collection returns the appropriate backing fields as readonly collections.
+    public IReadOnlyCollection<Review> Reviews => _reviews?.ToList();
+
+    private HashSet<BookAuthor> _authorsLink;
+    public IReadOnlyCollection<BookAuthor> AuthorsLink => _authorsLink?.ToList();
+    //… other collection properties left out
+}
+````
+
+
+
+If you are using AutoMapper, it will ignore the private access scope on your setter and update the property, which is not what you want to happen when using DDD. To stop this update, you need to add the `IgnoreAllPropertiesWithAnInaccessibleSetter` method after the call to AutoMapper’s `CreateMap<TSource,TDestination>` method.
+
+
+
+#### Updating the Book entity properties via methods in the entity class
+
+With all the properties converted to read-only, you need another way to update the data inside an entity. The answer is to add methods inside the entity class that can update the properties:
+
+* You can use an entity like a black box. The access methods and constructors are its API: it’s up to the entity to make sure that the data inside the entity is always in a valid state.
+* You can put your business rules in the access method. The method can return errors to users so that they can fix the problem and retry, or for a software problem, you can throw an exception.
+* If there isn’t a method to update a specific property, you know that you’re not allowed to change that property.
+
+Turning the rules into an access method means that no one can get them wrong. Also, the rules are in one place, so they’re easy to change if necessary. These access methods are some of DDD’s most powerful techniques.
+
+
+
+````c#
+// Example of a DDD access method that contains business logic/validation
+public IStatusGeneric AddPromotion( // The AddPromotion returns a status. If that status has errors, the promotion is not applied.
+    decimal actualPrice, string promotionalText) // The parameters came from the input.
+{
+    var status = new StatusGenericHandler(); // Creates a status that is successful unless errors are added to it
+    if (string.IsNullOrWhiteSpace(promotionalText)) // Ensures that the promotionalText has some text in it
+    {
+        // The AddError method adds an error and returns immediately.
+        return status.AddError("You must provide text to go with the promotion.", nameof(PromotionalText)); // The error contains a userfriendly message and the name of the property that has the error.
+    }
+
+    // If no errors occur, the ActualPrice and PromotionalText are updated.
+    ActualPrice = actualPrice;
+    PromotionalText = promotionalText;
+
+    return status; // The status, which is successful, is returned.
+}
+
+public void RemovePromotion() // This removes an existing promotion. Because there are no possible errors it returns void.
+{
+    // Removes the promotion by resetting the ActualPrice and the PromotionalText
+    ActualPrice = OrgPrice;
+    PromotionalText = null;
+}
+````
+
+
+
+#### Controlling how the Book entity is created
+
+In line with the DDD approach, in which the entity controls the setting of data in it, you need to think about the creation of an entity. You need to provide at least one constructor or a static create factory method for a developer to use to create a new instance of the entity.
+
+
+
+````c#
+// The static create factory to create a valid Book or return the errors
+private Book() { } // Creating a private constructor means that people can’t create the entity via a constructor.
+
+public static IStatusGeneric<Book> CreateBook( // The static CreateBook method returns a status with a valid Book (if there are no errors).
+    string title, DateTime publishedOn,
+    decimal price,
+    ICollection<Author> authors) // These parameters are all that are needed to create a valid Book.
+{
+    var status = new StatusGenericHandler<Book>(); // Creates a status that can return a result—in this case, a Book
+    if (string.IsNullOrWhiteSpace(title)) // Adds an error. Note that it doesn’t return immediately so that other errors can be added.
+    {
+        status.AddError("The book title cannot be empty.");
+    }
+
+    var book = new Book
+    {
+        Title = title,
+        PublishedOn = publishedOn,
+        OrgPrice = price,
+        ActualPrice = price,
+    };
+
+    if (authors == null) // The authors parameter, which is null, is considered to be a software error and throws an exception.
+    {
+        throw new ArgumentNullException(nameof(authors));
+    }
+
+    // Creates the BookAuthor class in the order in which the Authors have been provided
+    byte order = 0;
+    book._authorsLink = new HashSet<BookAuthor>(
+        authors.Select(a =>
+			new BookAuthor(book, a, order++)));
+
+    // If there are no Authors, add an error.
+    if (!book._authorsLink.Any())
+    {
+        status.AddError("You must have at least one Author for a book.");
+    }
+    
+    return status.SetResult(book); // Sets the status's Result to the new Book instance. If there are errors, the value is null.
+}
+````
+
+For simple entity classes, you can use a public constructor with specific parameters, but any entities that have business rules and return error messages should use a static factory in the entity class.
+
+
+
+#### Understanding the differences between an entity and a value object
+
+DDD talks about an entity (the `Book` entity being an example), but it also talks about a *value object*. The difference is what uniquely defines an instance of each.
+
+* An entity isn’t defined by the data inside it. We expect that more than one person named John Smith has written a book, for example. Therefore, the Book App would need a different `Author` entity for each author named John Smith.
+* A value object is defined by the data inside it. If we have an address to send an order to, and another address with the same road, city, state, zip code, and country, was created, the two instances of the address are said to be equal.
+
+From an EF Core perspective, a DDD entity is an EF Core entity class, which is saved to the database with some form of primary key. The primary key ensures that the entity is unique in the database, and when EF Core returns a query including entity classes (and the query doesn’t include any form of the `AsNoTracking` method), it uses a single instance for each entity class that has the same primary key.
+
+You can implement a value object by using EF Core’s owned type. The main form of an owned type is a class with no primary key; the data is added to the table it is included in.
+
+
+
+#### Minimizing the relationships between entity classes
+
+Added two-way relationships between entities mean you need to understand both entities when working on either entity, which makes the code harder to understand. Our recommendation is to minimize the relationships.
+
+A `Book`, for example, has a navigational property of all the `Review`s for a `Book`, but the `Review` does not have a navigational property back to the `Book`. Understanding the `Book` entity requires some idea of what the `Review` entity does, but when dealing with the `Review` entity, we had to understand only what the `Review` entity does.
+
+
+
+#### Grouping entity classes
+
+The aggregates principle says that you should group entities that can be considered to be "one unit for the purpose of data changes". One of the entities in an aggregate is the root aggregate, and any changes in the other aggregates are made via this root aggregate.
+
+
+
+![](./diagrams/images/13_04_grouping_entity_classes.png)
+
+
+
+The aggregate rule simplifies the handling of entities classes because one root entity can handle multiple aggregates in its group. Also, the root entity can validate that the other, nonroot aggregates are set up correctly for the root aggregate, such as the Book create factory’s checking that there is at least one `Author` for a `Book` entity.
+
+
+
+````c#
+// The access methods that control the aggregate entity Review
+public void AddReview(int numStars, string comment, string voterName) // Adds a new review with the given parameters
+{
+    if (_reviews == null) // This code relies on the _reviews field to be loaded, so it throws an exception if it isn’t.
+    {
+        throw new InvalidOperationException("Reviews collection not loaded");
+    }
+    
+    _reviews.Add(new Review(
+        numStars, comment, voterName)); // Creates a new Review, using its internal constructor
+}
+
+public void RemoveReview(int reviewId) // Removes a Review, using its primary key
+{
+    // Finds the specific Review to remove
+    if (_reviews == null)
+    {
+        throw new InvalidOperationException("Reviews collection not loaded");
+    }
+
+    var localReview = _reviews.SingleOrDefault(x => x.ReviewId == reviewId);
+
+    if (localReview == null) // Not finding the Review is considered to be a software error, so the code throws an exception.
+    {
+        throw new InvalidOperationException("The review wasn’t found");
+    }
+
+    _reviews.Remove(localReview); // The found Review is removed.
+}
+````
+
+One additional change you make is marking the `Review` entity class’s constructor as `internal`. That change stops a developer from adding a `Review` by creating an instance outside the `Book` entity.
+
+
+
+#### Deciding when the business logic shouldn’t be run inside an entity
+
+DDD says that you should move as much of your business logic inside your entities, but the DDD aggregates rule says that the root aggregate should work only with other entities in the aggregate group. If you have business logic that includes more than one DDD aggregate group, you shouldn’t put (all) the business logic in an entity; you need to create some external class to implement the business logic.
+
+An example of a situation that requires more than one aggregate group in the business logic is processing a user’s order for books. This business logic involves the Book entity, which is in the `Book`/`Review`/`BookAuthor` aggregate group, and the `Order`/`LineItem` aggregate group.
+
+
+
+````c#
+// PlaceOrderBizLogic class working across Book and Order entities
+public async Task<IStatusGeneric<Order>> // This method returns a status with the created Order, which is null if there are no errors.
+    CreateOrderAndSaveAsync(PlaceOrderInDto dto) // The PlaceOrderInDto contains a TandC bool, and a collection of BookIds and number of books.
+{
+    var status = new StatusGenericHandler<Order>(); // This status is used to gather errors, and if there are no errors, the code returns an Order.
+
+    // Validate the user's input
+    if (!dto.AcceptTAndCs)
+    {
+        return status.AddError("accept T&Cs…");
+    }
+    if (!dto.LineItems.Any())
+    {
+        return status.AddError("No items in your basket.");
+    }
+
+    // The _dbAccess contains the code to find each book.
+    var booksDict = await _dbAccess
+        .FindBooksByIdsAsync(dto.LineItems.Select(x => x.BookId));
+
+    // This method creates a list of bookIds and numbers of books.
+    var linesStatus = FormLineItemsWithErrorChecking(dto.LineItems, booksDict);
+    // If any errors were found while checking each order line, returns the error status
+    if (status.CombineStatuses(linesStatus).HasErrors)
+    {
+        return status;
+    }
+
+    // Calls the Order static factory. It is the Order's job to form the Order with LineItems.
+    var orderStatus = Order.CreateOrder(dto.UserId, linesStatus.Result);
+
+    if (status.CombineStatuses(orderStatus).HasErrors) // Again, any errors will abort the Order and return errors.
+    {
+        return status;
+    }
+
+    await _dbAccess.AddAndSave(orderStatus.Result); // The _dbAccess contains the code to add the Order and call SaveChangesAsync.
+
+    return status.SetResult(orderStatus.Result); // Returns a successful status with the created Order entity
+}
+````
+
+````c#
+// This static factory creates an Order with the LineItems, with error checks
+public static IStatusGeneric<Order> CreateOrder // This static factory creates the Order with lineItems.
+    (Guid userId, // The Order uses the UserId to show orders only to the person who created it.
+     IEnumerable<OrderBookDto> bookOrders) // The OrderBookDto lives in the Order domain and carries the info that the Order needs.
+{
+    var status = new StatusGenericHandler<Order>(); // Creates a status to return with an optional result of Order
+    var order = new Order
+    {
+        UserId = userId,
+        DateOrderedUtc = DateTime.UtcNow
+    };
+
+    byte lineNum = 1;
+    order._lineItems = new HashSet<LineItem>(
+        bookOrders
+        .Select(x => new LineItem(x, lineNum++))); // Creates each of the LineItems in the same order in which the user added them
+
+    if (!order._lineItems.Any()) // Double-checks that the Order is valid
+    {
+        status.AddError("No items in your basket.");
+    }
+
+    return status.SetResult(order); // Returns the status with the Order. If there are errors, the status sets the result to null.
+}
+````
+
+
+
+#### Applying DDD’s bounded context to your application’s DbContext
+
+Using an SQL View is an excellent solution in this case because it follows many of the DDD rules. First, the `BookView` contains only the data that the `Orders` side needs, so the developer isn’t distracted by irrelevant data. Second, when an entity class is configured as a View, EF Core marks that entity class as read-only, enforcing the DDD rule that only the `Books` entity should be able to change the data in the Books table. Another benefit is that a class mapped to an SQL View won’t add migration code to alter that table.
+
+
+
+![](./diagrams/images/13_05_ddd_bounded_context.png)
+
+
+
+### Using your DDD-styled entity classes in your application
+
+The DDD approach is to keep the focus on the domain mode - that is, on the entities and their relationships. Conversely, it doesn’t want the database (DDD persistence) parts to distract the developer who is working on the domain design. The idea is that the entity and its relationships (navigational properties in EF Core terms) are all the developer needs to consider when solving domain issues.
+
+
+
+#### Calling the AddPromotion access method via a repository pattern
+
+Repositories are classes or components that encapsulate the logic required to access data sources. They centralize common data access functionality, providing better maintainability and decoupling the infrastructure or technology used to access databases from the domain model layer.
+
+
+
+````c#
+// A generic repository that handles some basic database commands
+public class GenericRepository<TEntity> // The generic repository will work with any entity class.
+    where TEntity : class
+{
+	protected readonly DbContext Context; // The repository needs the DbContext of the database.
+
+    public GenericRepository(DbContext context)
+    {
+        Context = context;
+    }
+
+    public IQueryable<TEntity> GetEntities() // Returns an IQueryable query of the entity type
+    {
+        return Context.Set<TEntity>();
+    }
+
+    public async Task<TEntity> FindEntityAsync(int id) // This method finds and returns a entity with a integer primary key.
+    {
+        var entity = await Context.FindAsync<TEntity>(id); // Finds an entity via its single, integer primary key
+
+        if (entity == null)
+        {
+            throw new Exception("Could not find entity"); // A rudimentary check that the entity was found
+        }
+
+        return entity;
+    }
+
+    public Task PersistDataAsync()
+    {
+        return Context.SaveChangesAsync(); // Calls SaveChanges to update the database
+    }
+}
+````
+
+````c#
+// Handling the AddPromotion update by using a repository pattern
+public class AdminController : Controller
+{
+    private readonly GenericRepository<Book> _repository; // The GenericRepository<Book> is injected into the Controller.
+
+    public AdminController(
+        GenericRepository<Book> repository)
+    {
+        _repository = repository;
+    }
+
+    public async Task<IActionResult> AddPromotion(int id)
+    {
+        var book = await _repository.FindEntityAsync(id);
+
+        var dto = new AddPromotionDto // Copies over the parts of the Book you need to show the page
+        {
+            BookId = id,
+            Title = book.Title,
+            OrgPrice = book.OrgPrice
+        };
+
+        return View(dto);
+    }
+
+    [HttpPost]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> AddPromotion(AddPromotionDto dto)
+    {
+        if (!ModelState.IsValid)
+        {
+            return View(dto);
+        }
+
+        var book = await _repository
+            .FindEntityAsync(dto.BookId);
+        var status = book.AddPromotion(dto.ActualPrice, dto.PromotionalText); // Calls the AddPromotion access method with the two properties from the dto
+
+        if (!status.HasErrors)
+        {
+            await _repository.PersistDataAsync(); // The access method returned no errors, so you persist the data to the database.
+            return View("BookUpdated", "Updated book…");
+        }
+
+        //Error state
+        status.CopyErrorsToModelState(ModelState, dto);
+        return View(dto);
+    }
+}
+````
+
+
+
+#### Calling the AddPromotion access method via a class-to-method-call library
+
+Although calling DDD access methods by using a repository system works, this approach has some repetitious code, such as in the first stage, where you copy properties into a DTO/ViewModel to show to the user, and in the second stage, where returned data in the DTO is turned into an access method call. What would happen if you had a way to automate this process? (Nuget library: `EfCore.GenericServices`)
+
+
+
+````c#
+// Handling the AddPromotion update by using GenericServices
+public class AdminController : Controller
+{
+    private readonly ICrudServicesAsync _service; // The ICrudServicesAsync service comes from GenericServices and is injected via the Controller's constructor.
+
+    public AdminController(ICrudServicesAsync service)
+    {
+        _service = service;
+    }
+
+    public async Task<IActionResult> AddPromotion(int id)
+    {
+        var dto = await _service
+            .ReadSingleAsync<AddPromotionDto>(id); // The ReadSingleAsync<T> reads into the DTO, using the given primary key.
+
+        return View(dto);
+    }
+
+    [HttpPost]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> AddPromotion(AddPromotionDto dto)
+    {
+        if (!ModelState.IsValid)
+        {
+            return View(dto);
+        }
+
+        await _service.UpdateAndSaveAsync(dto); // The UpdateAndSaveAsync method calls the access method, and if no errors occur, it saves the access method to the database.
+
+        if (!_service.HasErrors)
+        {
+            return View("BookUpdated", service.Message);
+        }
+
+        //Error state
+        _service.CopyErrorsToModelState(ModelState, dto);
+        return View(dto);
+    }
+}
+````
+
+
+
+#### Adding a Review to the Book entity class via a repository pattern
+
+When you’re updating navigational properties, you need to handle another step: preloading the navigational property.
+
+
+
+````c#
+// Add the LoadBookWithReviewsAsync method to the repository
+public class BookRepository : GenericRepository<Book>
+{
+    public BookRepository(DbContext context)
+        : base(context) { } // The GenericRepository needs the application's DbContext.
+
+    public async Task<Book> LoadBookWithReviewsAsync(int bookId)
+    {
+        var book = await GetEntities() // Uses the GenericRepository's GetEntities to get a IQueryable<Book> query
+            .Include(b => b.Reviews) // Makes sure that the Review collection is loaded with the book
+            .SingleOrDefaultAsync(b => b.BookId == bookId);
+        if (book == null) // A rudimentary check that the entity was found
+        {
+            throw new Exception("Could not find book");
+        }
+        return book; // Returns the book with the Reviews collection loaded
+    }
+}
+````
+
+This code snippet shows how you would call the `LoadBookWithReviewsAsync` method in ASP.NET Core's `POST` action method:
+
+````c#
+var book = await _repository
+    .LoadBookWithReviewsAsync(dto.BookId);
+book.AddReview(dto.NumStars, dto.Comment, dto.VoterName);
+await _repository.PersistDataAsync();
+````
+
+
+
+#### Adding a Review to the Book entity class via a class-to-method-call library
+
+For preloading navigational properties, the `GenericServices` library provides an `IncludeThen` attribute that you add to the DTO. This attribute allows you to define the name of navigational properties to `lnclude` or `ThenInclude`.
+
+
+
+````c#
+// The AddReviewDto class with an attribute to load the Reviews
+[IncludeThen(nameof(Book.Reviews))] // The IncludeThen attribute includes the Book's Reviews navigational property.
+public class AddReviewDto // The name of the DTO shows that it should call the AddReview access method.
+    : ILinkToEntity<Book> // The entity that this DTO is linked to is the Book entity class.
+{
+    public int BookId { get; set; } // The primary key of the Book is filled in by the read and used by the update method.
+
+    public string Title { get; set; } // The Title is read in on a read and used to confirm to the user what book they are adding a Review to.
+
+    // These three properties are used as parameters in the AddReview access method.
+    public string VoterName { get; set; }
+    public int NumStars { get; set; }
+    public string Comment { get; set; }
+}  
+````
+
+After you add the `IncludeThen` attribute, any read of an entity will include the navigational properties. You use `GenericServices`' `ReadSingleAsync<T>` and `UpdateAndSaveAsync(dto)` methods the same way that you would access methods that do not have navigational properties to update.
+
+
+
+### The downside of DDD entities: Too many access methods
+
+When you are building a large application, the time it takes to write an access method grows if you have hundreds to write.
+
+If the property has no business rules (other than validation attributes), the setter on that property could be made public.
+
+As an example, if you look at the `Book` entity class, the `Title` property and the `Publisher` property have no business logic but should not be empty, so the setter of these two properties could be made public without having any effect on the business rules. Making the properties' setter public would save you from writing two more access methods and allow JSON Patch or AutoMapper to update these properties.
+
+
+
+### Getting around performance issues in DDD-styled entities
+
+Typically, the performance issues in an application involve queries, and DDD doesn’t affect them at all. But if you have database write performance issues, you might feel the need to bypass DDD. Instead of ditching DDD, you have three ways to keep using DDD with minimal bending of the rules.
+
+As an example, we look at the performance of adding or removing a `Review`. So far, you have loaded all the reviews before running add/remove access methods. If you have only a few Reviews, you have no problem, but if your site is like Amazon, where products can have thousands of reviews, loading all of them to add one new `Review` is going to be too slow.
+
+
+
+````c#
+// The updated Review public constructor with optional foreign key
+internal Review( // The Review constructor is internal, so only entity classes can create a Review.
+    int numStars, string comment, string voterName, // Standard properties
+    int bookId = 0) // A new, optional property is added for setting the Review foreign key.
+{
+    // Sets the standard properties
+    NumStars = numStars;
+    Comment = comment;
+    VoterName = voterName;
+
+    if (bookId != 0) // If a foreign-key parameter was provided, the BookId foreign key is set.
+    {
+        BookId = bookId;
+    }
+}
+````
+
+After you have changed the `Review` entity, you can use any of three options:
+
+* Allow database code into your entity classes.
+* Make the `Review` constructor public and write non-entity code to add a `Review`.
+* Use domain events to ask an event handler to add a `Review` to the database.
+
+The other option is to expose a navigational property linking the `Review` back to the Book entity. This option keeps the entity from knowing about foreign keys but breaks the DDD rule on minimizing relationships. Pick which rule you want to break.
+
+
+
+#### Allow database code into your entity classes
+
+One solution is for the `AddReview` access method to have access to the application’s DbContext. You can provide the application’s DbContext by adding an extra parameter to the `AddReview`/`RemoveReview` access methods or using EF Core’s service injection.
+
+
+
+````c#
+// Providing the application’s DbContext to the access methods
+public void AddReview(
+    int numStars, string comment, string voterName, // The access method takes the normal AddReview inputs ...
+    DbContext context) // ... but a new parameter is added, which is EF Core DbContext.
+{
+    if (BookId == default) // This method works only on a Book that is already in the database.
+    {
+        throw new Exception("Book must be in db");
+    }
+
+    if (context == null) // This method works only if an DbContext instance is provided.
+    {
+        throw new ArgumentNullException(nameof(context), "You must provide a context");
+    }
+    
+    var reviewToAdd = new Review(
+        numStars, comment, voterName,
+        BookId); // Creates the Review and sets the Review BookId foreign key
+
+    context.Add(reviewToAdd); // Uses the DbContext Add method to mark the new Review to be added to the database
+}
+
+public void RemoveReview(
+    int reviewId, // The access method takes the normal RemoveReview input of the ReviewId.
+    DbContext context)
+{
+    if (BookId == default) // This method works only on a Book that is already in the database.
+    {
+        throw new Exception("Book must be in db");
+    }
+
+    if (context == null) // This method works only if an DbContext instance is provided.
+    {
+        throw new ArgumentNullException(nameof(context), "You must provide a context");
+    }
+
+    var reviewToDelete = context.Set<Review>()
+        .SingleOrDefault(x => x.ReviewId == reviewId); // Reads in the review to delete
+
+    if (reviewToDelete == null) // A rudimentary check that the review entity was found
+    {
+        throw new Exception("Not found");
+    }
+
+    if (reviewToDelete.BookId != BookId) // If not linked to this Book, throw an exception.
+    {
+        throw new Exception("Not linked to book");
+    }
+
+    context.Remove(reviewToDelete);
+}
+````
+
+
+
+#### Make the Review constructor public and write nonentity code to add a Review
+
+This solution removes the database features from the Book’s access methods and places them in another project (most likely BizLogic). The solution makes the `Book` entity cleaner, but it does require the `Review` constructor’s access modifier to be changed to public. The downside is that anyone can create a `Review` entity instance.
+
+The code to add/remove a `Review` is the same, but now it is in its own class. This solution breaks the following DDD rules:
+
+* The `Book` entity isn’t in charge of the `Review` entities linked to it.
+* The `Review` has a public constructor, so any developer can create a `Review`.
+* The `Review` entity knows about a database feature: the `BookId` foreign key.
+
+
+
+#### Use domain events to ask an event handler to add a review to the database
+
+The last solution is to use a domain event to send a request to event handlers that add or remove a `Review`.
+
+
+
+![](./diagrams/images/13_06_domain_evvents.png)
+
+
+
+### Three architectural approaches: Did they work?
+
+#### A modular monolith approach that enforces SoC by using projects
+
+Here are a few tips for using the modular monolith approach:
+
+* Use a hierarchal naming rule for your projects. A name like `BookApp.Persistence.EfCoreSql.Books`, for example, makes it easier to find things.
+* Don’t end a project name with the name of a class. Instead, use something like …`Books`, not …`Book`.
+* You’re going to get project names wrong.
+* If you change the name of a project in Visual Studio by selecting the project and typing the new name, you don’t change the folder name.
+
+
+
+#### DDD principles, both architecturally and on the entity classes
+
+Here is a list of DDD features that made the development of the Book App easier:
+
+* Each entity class contained all the code needed to create or update that entity and any aggregate entities. If we needed to change anything, we knew where to look, and we knew that there wasn’t another version of this code elsewhere.
+* The DDD access methods were especially useful when we used domain events.
+* The DDD access methods were even more useful when we used integration events because we had to capture every possible change to the `Book` entity and its aggregates, which was easy to do by adding integration events to every access method and static create factory method in the `Book` entity. If ew couldn’t capture all changes in that way, we would have to detect changes by using the entities' `State`, and we know from experience that detecting changes is hard to implement.
+* The DDD bounded context that allowed two different EF Core DbContexts, `BookDbContext` and `OrderDbContext`, also worked well. Migrating the two parts of the same database worked fine.
+
+
+
+#### Clean architecture
+
+The Book App consisted of five layers, starting at the center and working out:
+
+* *Domain* - Holding entity classes
+* *Persistence* - Holding the DbContexts and other database classes
+* *Infrastructure* - Holding a mixture of projects, such as seeding the database and event handlers
+* *ServiceLayers* - Holding code to adapt the lower layers to the frontend
+* *UI* - Holding the ASP.NET Core application
+
+
+
+![](./diagrams/images/13_07_clean_architecture.png)
+
+
+
+### Summary
+
+* The architecture you use to build an application should help you focus on the feature you are adding while keeping the code nicely segregated so that it’s easier to refactor.
+* DDD provides lots of good recommendations on how to build an application.
+* DDD-styled entities control how they are created and updated; it’s the job of an entity to ensure that the data inside it is valid.
+* DDD has lots of rules to make sure that developers can put all their effort into the domain (business) needs that they have been asked to implement.
+* DDD groups entities into aggregates and says that one entity in the group, known as the root aggregate, manages the data and relationships across the aggregate.
+* Bounded context is a major DDD concept.
+* To update a DDD entity, you call a method within the entity class.
+* To create a new instance of an DDD entity, you use a constructor with specific parameters or a static create factory method that returns validation feedback.
+* To update a DDD entity, first load the entity so that you can call the access method. You can do this via normal EF Core code, a repository, or the `EFCore.GenericServices` library.
+* Updating collection relationships can be slow if there are lots of existing entries in the collection. You have three ways to improve performance in these cases.
+
+
+
+
+
+## 14. EF Core performance tuning
+
+* Deciding which performance issues to fix
+* Employing techniques that find performance issues
+* Using patterns that promote good performance
+* Finding patterns that cause performance issues
+
+
+
+### Part 1: Deciding which performance issues to fix
+
+#### "Don’t performance-tune too early" doesn’t mean you stop thinking
+
+The number-one goal is to get your application working properly first, but:
+
+* Make sure that any software patterns you use don’t contain inherent performance problems. Otherwise, you’ll be building in inefficiencies from day one.
+* Don’t write code that makes it hard to find and fix performance problems. If you mix your database access code with other code, such as frontend code, for example, performance changes can get messy and difficult to test.
+* Don’t pick the wrong architecture. Nowadays, the scalability of web applications is easier to improve by running multiple instances of the web application. But if you have an application that needs high scalability, a Command and Query Responsibility Segregation (CQRS) architecture might help.
+
+
+
+#### How do you decide what’s slow and needs performance tuning?
