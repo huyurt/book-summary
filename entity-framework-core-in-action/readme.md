@@ -10163,3 +10163,367 @@ The number-one goal is to get your application working properly first, but:
 
 
 #### How do you decide what’s slow and needs performance tuning?
+
+You need clear metrics:
+
+* Define the feature. What’s the exact query/command that needs improving, and under what circumstances is it slow (number of concurrent users, for example)?
+* Get timings. How long does the feature take now, and how fast does it need to be?
+* Estimate the cost of the fix. How much is the improvement worth? When should you stop?
+* Prove that it still works. Do you have a way to confirm that the feature is working properly before you start the performance tuning and that it still works after the performance change?
+
+
+
+#### The cost of finding and fixing performance issues
+
+
+
+![](./diagrams/images/14_01_cost_of_finding_and_fixing_performance_issues.png)
+
+
+
+### Part 2: Techniques for diagnosing a performance issue
+
+
+
+![](./diagrams/images/14_02_diagnosing_performance_issue.png)
+
+
+
+#### Stage 1: Get a good overview, measuring the user’s experience
+
+
+
+#### Stage 2: Find all the database code involved in the feature you’re tuning
+
+
+
+#### Stage 3: Inspect the SQL code to find poor performance
+
+**CAPTURING THE LOGGING OUTPUT**
+
+````c#
+// Capturing EF Core’s logging output in a unit test
+var logs = new List<string>(); // Holds all the logs that EF Core outputs
+var builder = new DbContextOptionsBuilder<BookDbContext>() // The DbContextOptionsBuilder<T> is the way to build the options needed to create a context.
+    .UseSqlServer(connectionString) // Says you are using a SQL Server database and takes in a connection string
+    .EnableSensitiveDataLogging() // By default, exceptions don't contain sensitive data. This code includes sensitive data.
+    .LogTo(log => logs.Add(log), // The log string is captured and added to the log.
+		LogLevel.Information); // Sets the log level. Information level contains the executed SQL.
+using var context = new BookDbContext(builder.Options); // Creates the application's DbContext—in this case, the context holding the books data
+//... your query goes here
+````
+
+
+
+**EXTRACTING THE SQL COMMANDS SENT TO THE DATABASE**
+
+````sql
+// An Information log showing the SQL command sent to the database
+Executed DbCommand (4ms) -- Tells you how long the database took to return from this command
+	[Parameters=[], -- If any external parameters are used in the command, their names will be listed here.
+	CommandType='Text',
+	CommandTimeout='30'] -- The timeout for the command. If the command takes more than that time, it's deemed to have failed.
+SELECT [p].[BookId], [p].[Description], -- SQL command that was sent to the database
+	[p].[ImageUrl], [p].[Price],
+	[p].[PublishedOn], [p].[Publisher],
+	[p].[Title],
+	[p.Promotion].[PriceOfferId],
+	[p.Promotion].[BookId],
+	[p.Promotion].[NewPrice],
+	[p.Promotion].[PromotionalText]
+FROM [Books] AS [p]
+LEFT JOIN [PriceOffers] AS [p.Promotion]
+ON [p].[BookId] = [p.Promotion].[BookId]
+ORDER BY [p].[BookId] DESC
+````
+
+
+
+### Part 3: Techniques for fixing performance issues
+
+* Good EF Core patterns - "Apply always" patterns that you might like to adopt. They aren’t foolproof but give your application a good start.
+* Poor database query patterns - EF Core code antipatterns, or patterns you shouldn’t adopt, because they tend to produce poor-performing SQL queries.
+* Poor software patterns - EF Core code antipatterns that make your database write code run more slowly.
+* Scalability patterns - Techniques that help your database handle lots of database accesses.
+
+
+
+### Using good patterns makes your application perform well
+
+#### Using Select loading to load only the columns you need
+
+Creating a Select query with a DTO does take more effort than using eager loading with the Include method, but benefits exist beyond higher database access performance, such as reducing coupling between layers.
+
+
+
+#### Using paging and/or filtering of searches to reduce the rows you load
+
+You need to apply commands that will limit the amount of data returned to the user.
+
+* *Paging* - You return a limited set of data to the user (say, 100 rows) and provide the user commands to step through the "pages" of data.
+* *Filtering* - If you have a lot of data, a user will normally appreciate a search feature, which will return a subset of the data.
+
+
+
+#### Warning: Lazy loading will affect database performance
+
+Lazy loading is a technique that allows relationships to be loaded when read. The problem is that lazy loading has a detrimental effect on the performance of your database accesses, and after you’ve used lazy loading in your application, replacing it can require quite a bit of work. If you have too many lazy loads, your query is going to be slow.
+
+
+
+#### Always adding the AsNoTracking method to read-only queries
+
+If you’re reading in entity classes directly and aren’t going to update them, including the `AsNoTracking` method in your query is worthwhile.
+
+````c#
+// Using the AsNoTracking method to improve the performance of a query
+var result = context.Books
+    .Include(r => r.Reviews)
+    .AsNoTracking() // Adding the AsNoTracking method tells EF Core not to create a tracking snapshot, which saves time and memory use.
+    .ToList();
+````
+
+If you use a `Select` query in which the result maps to a DTO, and that DTO doesn’t contain any entity classes, you don’t need to add the `AsNoTracking` method. But if your DTO contains an entity class, adding the `AsNoTracking` method will help.
+
+
+
+#### Using the async version of EF Core commands to improve scalability
+
+Microsoft’s recommended practice for ASP.NET applications is to use async commands wherever possible.
+
+
+
+#### Ensuring that your database access code is isolated/decoupled
+
+* *Is in a clearly defined place (isolated).* Isolating each database access into its own method allows you to find the database code that’s affecting performance.
+* *Contains only the database access code (decoupled).* My advice is to not mix your database access code with other parts of the application, such as the UI or API. That way, you can change your database access code without worrying about other, nondatabase issues.
+
+
+
+### Performance antipatterns: Database queries
+
+#### Antipattern: Not minimizing the number of calls to the database
+
+If you’re reading an entity from the database with its related data, you have four ways of loading that data: select loading, eager loading, explicit loading, and lazy loading. Although all three techniques achieve the same result, their performance differs quite a lot. The main difference comes down to the number of separate database accesses they make; the more separate database accesses you do, the longer your database access will take.
+
+
+
+| Type of query                     | #Database accesses | EF time (ms) / % |
+| --------------------------------- | ------------------ | ---------------- |
+| `Select` and eager loading        | 1                  | 1.95 / 100%      |
+| Eager loading with `AsSplitQuery` | 4                  | 2.10 / 108%      |
+| Explicit and lazy loading         | 6                  | 2.10 / 108%      |
+
+With the improvements in EF Core, the differences between `Select`/eager, eager with `AsSplitQuery`, and explicit/lazy loading are smaller, but multiple accesses to the database still have a cost. So the rule is to try to create one LINQ query that gets all the data you need in one database access. `Select` queries are the best-performing if you need only specific properties; otherwise, eager loading, with its `Include` method, is better if you want the entity with its relationships to apply an update.
+
+
+
+#### Antipattern: Missing indexes from a property that you want to search on
+
+If you plan to search on a property that isn’t a key (EF Core adds an index automatically to primary, foreign, or alternate keys), adding an index to that property will improve search and sort performance.
+
+
+
+#### Antipattern: Not using the fastest way to load a single entity
+
+| Method                                            | Time    | Ratio to single |
+| ------------------------------------------------- | ------- | --------------- |
+| `context.Books.Single(x => x.BookId == id)`       | 175 us. | 100%            |
+| `context.Books.First(x => x.BookId == id)`        | 190 us. | 109%            |
+| `context.Find<Book>(id)` (entity not tracked)     | 610 us. | 350%            |
+| `context.Find<Book>(id)` (entity already tracked) | 0.5 us. | 0.3%            |
+
+`Single` (and `SingleOrDefault`) was fastest for a database access, and also better than using `First`, as `Single` will throw an exception if your `Where` clause returns more than one result. `Single` and `First` also allow you to use `Includes` in your query.
+
+You should use the `Find` method if the entity is being tracked in the context, in which case `Find` will be super-fast. `Find` is fast because it scans the tracked entities first, and if it finds the required entity, it returns that entity without any access to the database. The downside of this scan is that `Find` is slower if the entity isn’t found in the context.
+
+
+
+#### Antipattern: Allowing too much of a data query to be moved into the software side
+
+````c#
+// Two LINQ commands that would have different performance times
+context.Books.Where(p => p.Price > 40).ToList(); // This query would perform well, as the Where part would be executed in the database.
+context.Books.ToList().Where(p => p.Price > 40); // This query would perform badly, as all the books would be returned (which takes time), and then the Where part would be executed in software.
+````
+
+
+
+#### Antipattern: Not moving calculations into the database
+
+
+
+#### Antipattern: Not replacing suboptimal SQL in a LINQ query
+
+Sometimes, you know something about your data that allows you to come up with a piece of SQL code that’s better than EF Core. But at the same time, you don’t want to lose the ease of creating queries with EF Core and LINQ. You have several ways to add SQL calculations to the normal LINQ queries:
+
+* *Add user-defined functions to your LINQ queries.* A scalar-valued user-defined function returns a single value that you can assign to a property
+  in a query, whereas a table-valued UDF returns data as though it came from
+  a table.
+* *Create an SQL View in your database that has the SQL commands to compute values.*
+  Map an entity class to that View and then apply LINQ queries
+  to that mapped entity class. This approach gives you room to add some
+  sophisticated SQL inside the View while using LINQ to access that data.
+* *Use EF Core’s raw SQL methods `FromSqlRaw` and `FromSqlInterpolated`.* These
+  methods allow you to use SQL to handle the first part of the query. You can follow
+  with other LINQ commands, such as `sort` and `filter`.
+* *Configure a property as a computed column.* Use this approach if that property calculation
+  can be done with other properties/columns in the entity class and/or
+  SQL commands.
+
+
+
+#### Antipattern: Not precompiling frequently used queries
+
+When you first use an EF Core query, it’s compiled and cached, so if you use it again, the compiled query can be found in the cache, which saves compiling the query again. But there’s a (small) cost to this cache lookup, which the EF Core method `EF.CompiledQuery` can bypass. If you have a query that you use a lot, it’s worth trying.
+
+* You can use a compiled query only if the LINQ command isn’t built dynamically, with parts of the LINQ being added or removed.
+* The query returns a single entity class - an `IEnumerable<T>` or an `IAsyncEnumerable<T>` - so you can’t chain query objects.
+
+The `EF.CompiledQuery` method allows you to hold the compiled query in a static variable, which removes the cache lookup part.
+
+
+
+### Performance antipatterns: Writes
+
+#### Antipattern: Calling SaveChanges multiple times
+
+If you have lots of information to add to the database, you have two options:
+
+* *Add one entity and call `SaveChanges`.* If you’re saving 10 entities, call the Add method followed by a call to the `SaveChanges` method 10 times.
+* *Add all the entity instances, and call `SaveChanges` at the end.* To save 10 entities, call `Add` 10 times (or, better, one call to `AddRange`) followed by one call to `SaveChanges` at the end.
+
+Option 2 - calling `SaveChanges` only once - is a lot faster because EF Core will batch multiple data writes on database servers that allow this approach, such as SQL Server. As a result, this approach generates SQL code that’s more efficient at writing multiple items to the database.
+
+
+
+A comparison of calling `SaveChanges` after adding each entity, and adding all the entities and then calling `SaveChanges` at the end. Calling `SaveChanges` at the end is about 15 times faster than calling `SaveChanges` after every Add.
+
+* One at a time
+
+````c#
+for (int i = 0; i < 100; i++)
+{
+    context.Add(new MyEntity());
+    context.SaveChanges();
+}
+// Total time = 160 ms
+````
+
+* All at once (batched in SQL Server)
+
+````c#
+for (int i = 0; i < 100; i++)
+{
+    context.Add(new MyEntity());
+}
+context.SaveChanges();
+// Total time = 9 ms
+````
+
+
+
+#### Antipattern: Making DetectChanges work too hard
+
+Time taken by the `SaveChanges` method, which contains the call to the `DetectChanges.Detect` method, to save one entity for different levels of tracked entities. Note that the tracked entities used in this table are small.
+
+| Number of tracked entities | How long SaveChanges took | How much slower? |
+| -------------------------- | ------------------------- | ---------------- |
+| 0                          | 0.2 ms.                   | n/a              |
+| 100                        | 0.6 ms.                   | 2 times slower   |
+| 1000                       | 2.2 ms.                   | 11 times slower  |
+| 10000                      | 20.0 ms.                  | 100 times slower |
+
+
+
+#### Antipattern: Not using HashSet<T> for navigational collection properties
+
+* When you’re loading collection navigational properties in a query - say, by using the `Include` method - `HashSet<T>` for collections is quicker than collection navigational properties using `ICollection<T>` / `IList<T>`. Adding an entity with 1000 entities in a collection navigational property, for example, took 30% longer with `ICollection<T>` than using `HashSet<T>` because it is easier to detect/find instances in a `HashSet<T>`.
+* The more tracked entities of the same type found in the entity (and its relationships) that was added, the more time it takes to check them all. The performance hit is hard to measure but seems to be small. But if you have issues with an Add taking a long time, it’s worthwhile to check for a lot of tracked entities, which may be part of the slowness of your Add method call.
+* The downside of using `HashSet<T>` is that it does not guarantee the order of the entries in the collection. So if you are using EF Core’s ability sort entries in an Include method, you can’t use `HashSet<T>`.
+
+
+
+#### Antipattern: Using the Update method when you want to change only part of the entity
+
+EF Core is great at detecting changes to individual properties in an entity class using the `DetectChanges.Detect` method.
+
+
+
+#### Antipattern: Startup issue—Using one large DbContext
+
+
+
+![](./diagrams/images/14_03_antipattern_using_one_large_dbcontext.png)
+
+
+
+### Performance patterns: Scalability of database accesses
+
+#### Using pooling to reduce the cost of a new application’s DbContext
+
+If you’re building an ASP.NET Core application, EF Core provides a method called `AddDbContextPool<T>` that replaces the normal `AddDbContext<T>` method. The `AddDbContextPool<T>` method uses an internal pool of an application’s DbContext instances, which it can reuse. This method speeds your application’s response time when you have lots of short requests.
+
+But be aware that you shouldn’t use it in some situations. When you’re passing in data based on the HTTP request, such as the logged-in user’s ID, you shouldn’t use DbContext pooling because it would use the wrong user ID in some instances of the application’s DbContext.
+
+
+
+````c#
+// Using AddDbContextPool to register the application’s DbContext
+services.AddDbContextPool<EfCoreContext>( // You’re using an SQL Server database, but pooling works with any database provider.
+    options => options.UseSqlServer(connection, // You register your application DbContext by using the AddDbContextPool<T>.
+	b => b.MigrationsAssembly("DataLayer"))); // Because you’re using migrations in a layered architecture, you need to tell the database provider which assembly the migration code is in.
+````
+
+
+
+#### Adding scalability with little effect on overall speed
+
+async/await releases a thread to allow other requests to be handled while the async part is waiting for the database to respond. Using an async method instead of the normal, synchronous method does add a small amount of overhead to each call but the slow queries need async, as it releases a thread for a long time. The fact that the fastest queries have the smallest sync/async difference says that using async won’t penalize the small queries. Overall, you have plenty to gain and little downside from using async/await.
+
+Performance for a mixture of types of database access returning books, using sync and async versions. The database contains 1000 books.
+
+| Type of database access                             | #DB trips | Sync     | Async    | Difference |
+| --------------------------------------------------- | --------- | -------- | -------- | ---------- |
+| Read book only, simple load                         | 1         | 0.7 ms.  | 0.8 ms.  | 112%       |
+| Read book, eager-load relationships                 | 1         | 9.7 ms.  | 13.7 ms. | 140%       |
+| Read book, eager-load relationships+sort and filter | 1         | 10.5 ms. | 14.5 ms. | 140%       |
+
+
+
+#### Helping your database scalability by making your queries simple
+
+
+
+#### Scaling up the database server
+
+
+
+#### Picking the right architecture for applications that need high scalability
+
+
+
+### Summary
+
+* Don’t performance-tune too early; get your application to work properly first. But try to design your application so that if you need to performance-tune later, it’s easier to find and fix your database code.
+* Performance tuning isn’t free, so you need to decide what performance issues are worth the development effort to fix.
+* EF Core’s log output can help you identify database access code that has performance issues.
+* Make sure that any standard patterns or techniques you use in writing your application perform well. Otherwise, you’ll bake in performance issues from day one.
+* Avoid or fix any database performance antipatterns (database accesses that don’t perform well).
+* If scalability is an issue, try simple improvements, but high scalability may need a fundamental rethinking of the application’s architecture.
+
+
+
+
+
+## 15. Master class on performance-tuning database queries
+
+* Understanding four different approaches to performance-tuning EF Core queries
+* Comparing the different performance gains each approach provides
+* Extracting the good practices from each approach to use in your applications
+* Evaluating the skills and development effort needed to implement each approach
+* Understanding what database scalability is and how to improve it
+
+
+
+### The test setup and a summary of the four performance approaches
