@@ -10526,4 +10526,614 @@ Performance for a mixture of types of database access returning books, using syn
 
 
 
-### The test setup and a summary of the four performance approaches
+### Good LINQ approach: Using an EF Core Select query
+
+````c#
+// MapBookToDto method that selects what to show in the book display query
+public static IQueryable<BookListDto> MapBookToDto(this IQueryable<Book> books)
+{
+    return books.Select(p => new BookListDto // Good practice: Load only the properties you need.
+    {
+        BookId = p.BookId,
+        Title = p.Title,
+        PublishedOn = p.PublishedOn,
+        EstimatedDate = p.EstimatedDate,
+        OrgPrice = p.OrgPrice, // Good practice: Use indexed properties to sort/filter on (in this case, the ActualPrice).
+        ActualPrice = p.ActualPrice,
+        PromotionText = p.PromotionalText,
+        AuthorsOrdered = string.Join(", ", // Good practice: Don’t load the whole entity of each relationships, only the parts you need.
+			p.AuthorsLink
+				.OrderBy(q => q.Order)
+                .Select(q => q.Author.Name)),
+        TagStrings = p.Tags
+            .Select(x => x.TagId).ToArray(),
+        ReviewsCount = p.Reviews.Count(), // Good practice: The ReviewsCount and ReviewsAverageVotes are calculated in the database.
+        ReviewsAverageVotes =
+            p.Reviews.Select(y =>
+				(double?)y.NumStars).Average(),
+        ManningBookUrl = p.ManningBookUrl
+    });
+}
+````
+
+
+
+**LOADING ONLY THE PROPERTIES YOU NEED FOR THE QUERY**
+
+You could have loaded the whole `Book` entity, but that would mean loading data you didn’t need. The Manning Publications book data contains large strings summarizing the book’s content, what technology it covers, and so on. The book display doesn’t need that data, however, and loading it would make the query slower, so you don’t load it.
+
+In line with the recommendation that you don’t performance-tune too early, you might start with a simple query that reads in the entity classes, and performance-tune later. If a query is slow and you are loading the whole entity class, consider changing to the LINQ `Select` method and loading only the properties you need.
+
+
+
+**DON’T LOAD WHOLE RELATIONSHIPS - ONLY THE PARTS YOU NEED**
+
+Typically, you don’t need to load the relationship’s whole entity classes. If you need data from relationships, try to extract the specific parts from any relationships. An even better idea is to move calculations into the database if you can.
+
+
+
+**IF POSSIBLE, MOVE CALCULATIONS INTO THE DATABASE**
+
+If you want good performance, especially for sorting or filtering on values that need calculating, it’s much better for the calculation to be done inside the database. Calculating data inside the database has two benefits:
+
+* The data used in the calculation never leaves the database, so less data needs to be sent back to the application.
+* The calculated value can be used in a sort or filter, so you can execute the query in one command to the database.
+
+
+
+**IF POSSIBLE, USE INDEXED PROPERTIES TO SORT/FILTER ON**
+
+````c#
+ActualPrice = book.Promotion == null
+    ? book.Price
+    : book.Promotion.NewPrice,
+PromotionPromotionalText =
+    book.Promotion == null
+    ? null
+    : book.Promotion.PromotionalText,
+````
+
+That code has two negative effects on sorting on price: the LINQ is converted to an SQL `JOIN` to find the optional `PriceOffers` row, which takes time, and you can’t add a SQL index to this calculation. Changing the code to not use the `PriceOffer` entity removes the SQL `JOIN`, and you can add an SQL `INDEX` to the `ActualPrice` column in the database, significantly improving the sort-on-price feature.
+
+So if you need to query some data, especially if you’re sorting or filtering on that data, try to precompute the data in your code. Or use a persisted computed column if the property is calculated based on other properties/columns in the same entity class, such as `[TotalPrice] AS (NumBook * BookPrice)`. That way, you will get a significant improvement in any sort or filter because of the SQL index on that column.
+
+
+
+### LINQ+UDFs approach: Adding some SQL to your LINQ code
+
+````sql
+CREATE FUNCTION AuthorsStringUdf (@bookId int)
+RETURNS NVARCHAR(4000)
+AS
+BEGIN
+DECLARE @Names AS NVARCHAR(4000)
+SELECT @Names = COALESCE(@Names + ', ', '') + a.Name
+FROM Authors AS a, Books AS b, BookAuthor AS ba
+WHERE ba.BookId = @bookId
+	AND ba.AuthorId = a.AuthorId
+	AND ba.BookId = b.BookId
+ORDER BY ba.[Order]
+RETURN @Names
+END
+````
+
+````c#
+// MapBookUdfsToDto using UDFs to concatenate Name/Tag names
+public static IQueryable<UdfsBookListDto> MapBookUdfsToDto(this IQueryable<Book> books) // Updated MapBookToDto method, now called MapBookUdfsToDto
+{
+    return books.Select(p => new UdfsBookListDto
+	{
+        BookId = p.BookId,
+        Title = p.Title,
+        PublishedOn = p.PublishedOn,
+        EstimatedDate = p.EstimatedDate,
+        OrgPrice = p.OrgPrice,
+        ActualPrice = p.ActualPrice,
+        PromotionText = p.PromotionalText,
+        AuthorsOrdered = UdfDefinitions // The AuthorsOrdered and TagsString are set to the strings from the UDFs.
+            .AuthorsStringUdf(p.BookId),
+        TagsString = UdfDefinitions
+            .TagsStringUdf(p.BookId),
+        ReviewsCount = p.Reviews.Count(),
+        ReviewsAverageVotes =
+            p.Reviews.Select(y =>
+				(double?)y.NumStars).Average(),
+        ManningBookUrl = p.ManningBookUrl
+    });
+}
+````
+
+When you change the `MapBookToDto` extension method to use the `AuthorsStringUdf` and the `TagsStringUdf` UDFs, each book returns only one row, and there is no `ORDER BY` other than the default ordering on `BookId`, descending. This change has a small effect on a nonsorted display of 100 books (improving it by a few milliseconds), but the big effect is on the sort by average votes, which comes down from 840 ms in the Good LINQ approach to 620 ms in the LINQ+SQL approach - an improvement of about 25%.
+
+
+
+### SQL+Dapper: Creating your own SQL
+
+
+
+![](./diagrams/images/15_01_sql_dapper.png)
+
+
+
+
+![](./diagrams/images/15_02_sql_dapper.png)
+
+
+
+### LINQ+caching approach: Precalculating costly query parts
+
+Precalculating the parts of the query that take a long time to calculate and storing them in extra properties/columns in entity class. This technique is known as *caching* or *denormalization*.
+
+Caching has the biggest effect on the sort-by-votes query, making it about 14 times faster than the Good LINQ approach and 8 times faster than the Dapper approach.
+
+But when you’re thinking about using caching, you also need to think about how often the cached value is updated and how long it takes to update the cache. If the data that is cached is updated a lot, the cost of updating the cache may move the performance problem from running the query to updating entities.
+
+Adding a caching system isn’t trivial to implement. Here are the steps:
+
+1. Add a way to detect changes that affect the cached values.
+2. Add code to update the cached values.
+3. Add the cache properties to the Book entity and provide concurrency code to handle simultaneous updates of the cached values.
+4. Build the book display query to use the cached values.
+
+
+
+#### Adding a way to detect changes that affect the cached values
+
+One positive feature of the domain events approach is that the change that triggers an update of a cached value is saved in the same transaction that saves the cached value. As a result, both changes are applied to the database, or if anything fails, none of the updates are applied to the database. That approach prevents the real data and cached data from getting out of step (known as a dirty cache).
+
+
+
+To speed the development, you are going to use my `EfCore.GenericEventRunner` library.
+
+````c#
+// BookDbContext updated to use GenericEventRunner
+public class BookDbContext // The BookDbContext handles the Books side of the data.
+    : DbContextWithEvents<BookDbContext> // Instead of inheriting EF Core’s DbContext, you inherit the class from GenericEventRunner.
+{
+    public BookDbContext(
+        DbContextOptions<BookDbContext> options,
+        IEventsRunner eventRunner = null) // DI will provide GenericEventRunner’s EventRunner. If null, no events are used (useful for unit tests).
+        : base(options, eventRunner) // The constructor of the DbContextWithEvents class needs the EventRunner.
+    { }
+
+    //… rest of BookDbContext is normal, so left out
+}
+````
+
+The next stage is adding the events to the `Book`'s `AddReview` and `RemoveReview` access methods.
+
+````c#
+// The Book entity with the AddReview and RemoveReview methods
+public class Book : EntityEventsBase, // Adding the EntityEventsBase will provide the methods to send an event.
+	ISoftDelete
+{
+    //… other code left out for clarity
+    public void AddReview(int numStars, string comment, string voterName) // The AddReview is the only way to add a Review to this Book.
+    {
+        if (_reviews == null)
+        {
+            throw new InvalidOperationException("The Reviews collection must be loaded");
+        }
+
+        _reviews.Add(new Review(numStars, comment, voterName));
+        
+        AddEvent(new BookReviewAddedEvent(numStars, // Adds a BookReviewAddedEvent domain event with the NumStars of the new Review
+			UpdateReviewCachedValues)); // Provides the event handler a secure way to update the Review cached values
+    }
+    
+    public void RemoveReview(int reviewId) // The RemoveReview method is the only way to remove a Review from this Book.
+    {
+        if (_reviews == null)
+        {
+            throw new InvalidOperationException("The Reviews collection must be loaded");
+        }
+
+        var localReview = _reviews.SingleOrDefault(
+            x => x.ReviewId == reviewId);
+        if (localReview == null)
+        {
+            throw new InvalidOperationException("The review was not found.");
+        }
+        
+        _reviews.Remove(localReview);
+
+        AddEvent(new BookReviewRemovedEvent(localReview, // Adds a BookReviewAddedEvent domain event with the review that has been deleted
+			UpdateReviewCachedValues)); // The RemoveReview method is the only way to remove a Review from this Book.
+    }
+
+    private void UpdateReviewCachedValues(int reviewsCount, double reviewsAverageVotes) // This private method can be used by the event handlers to update the cached values.
+    {
+        ReviewsCount = reviewsCount;
+        ReviewsAverageVotes = reviewsAverageVotes;
+    }
+}
+````
+
+To catch a change of an `Author`'s `Name`, we will use a non-DDD approach and intercept the setting of a property. This approach uses EF Core’s backing-field feature so that we can detect a change in the `Author`'s `Name`.
+
+````c#
+// Author entity sending an event when the Name property is changed
+public class Author : EntityEventsBase // Adding the EntityEventsBase will provide the methods to send an event.
+{
+    private string _name; // The backing field for the Name property, which EF Core will read/write
+
+    public string Name
+    {
+        get => _name;
+        set // You make the setting public and override the setter to add the event test/send.
+        {
+            // If the Name has changed, and it’s not a new Author, sends a domain event
+            if (value != _name && AuthorId != default)
+            {
+                AddEvent(new AuthorNameUpdatedEvent());
+            }
+            _name = value;
+        }
+    }
+    
+    //… other code left out for clarity
+}
+````
+
+
+
+#### Adding code to update the cached values
+
+You will create some event handlers to update the cached values when the appropriate domain event comes in. These event handlers will be called before `SaveChanges`/`SaveChangesAsync`, so the changes that triggered the events and the subsequent changes applied by the event handlers will be saved in the same transaction. Two styles of updating the cached values within the event handlers:
+
+* The fast delta updates, which work with numeric changes to cached values. When the `AddReview` event is received, for example, the event handler will increment the `ReviewsCount` cache property. This option is fast, but it needs careful coding to make sure that it produces the correct result in every situation.
+* The more-normal recalculate updates, in which you run a query to recalculate the cached value. This option is used to update the `AuthorsOrdered` cache property.
+
+
+
+**UPDATING THE REVIEWS CACHED VALUES USING THE DELTA UPDATE STYLE**
+
+Adding, updating, or removing `Reviews` causes specific events, which in turn cause an event handle linked to each event type to run.
+
+
+
+![](./diagrams/images/15_03_updating_reviews_cached_values_using_delta_update_style.png)
+
+
+
+````c#
+// Linking ReviewAddedHandler class to the BookReviewAddedEvent
+public class ReviewAddedHandler : IBeforeSaveEventHandler<BookReviewAddedEvent> // Tells the Event Runner that this event should be called when it finds a BookReviewAddedEvent
+{
+    public IStatusGeneric Handle(object callingEntity, BookReviewAddedEvent domainEvent) // The Event Runner provides the instance of the calling entity and the event.
+    {
+        var book = (Domain.Books.Book) callingEntity; // Casts the object back to its actual type of Book to make access easier
+
+        // The first part of this calculation works out how many stars before adding the new stars.
+        var totalStars = Math.Round(
+            book.ReviewsAverageVotes * book.ReviewsCount) +
+            domainEvent.NumStars; // Adds the star rating from the new Review
+        var numReviews = book.ReviewsCount + 1; // A simple add of 1 gets the new number of Reviews.
+
+        domainEvent.UpdateReviewCachedValues( // The entity class provides a method to update the cached values.
+            numReviews, // The first parameter is the number of reviews.
+            totalStars / numReviews); // The second parameter provides the new average of the NumStars.
+        
+        return null; // Returning null is a quick way to say that the event handler is always successful.
+    }
+}
+````
+
+This event handler doesn’t access the database and therefore is quick, so the overhead of updating the `ReviewsCount` and `ReviewsAverageVotes` cached values is small.
+
+
+
+**UPDATING THE BOOK’S AUTHORS' NAME CACHED VALUE BY RECALCULATION**
+
+
+
+![](./diagrams/images/15_04_updating_books_authors_name_cached_value_by_recalculation.png)
+
+
+
+The following listing shows the `AuthorNameUpdatedHandler` that the `GenericEventRunner` calls when it finds the domain event that was created when an `Author`'s `Name` property was changed. This event handler loops through all the `Book`s that have that `Author` and recalculates each `Book`'s `AuthorsOrdered` cache value.
+
+````c#
+// The event handler that manages a change of an Author’s Name property
+public class AuthorNameUpdatedHandler : IBeforeSaveEventHandler<AuthorNameUpdatedEvent> // Tells the Event Runner that this event should be called when it finds a AuthorNameUpdatedEvent
+{
+    // The event handler needs to access the database.
+    private readonly BookDbContext _context;
+    
+    public AuthorNameUpdatedHandler(BookDbContext context)
+    {
+        _context = context;
+    }
+
+    // The Event Runner provides the instance of the calling entity and the event.
+    public IStatusGeneric Handle(object callingEntity, AuthorNameUpdatedEvent domainEvent)
+    {
+        var changedAuthor = (Author) callingEntity; // Casts the object back to its actual type of Author to make access easier
+
+        // Loops through all the books that contain the Author that has changed
+        foreach (var book in _context.Set<BookAuthor>()
+			.Where(x => x.AuthorId == changedAuthor.AuthorId)
+            .Select(x => x.Book))
+        {
+            // Gets the Authors, in the correct order, linked to this Book
+            var allAuthorsInOrder = _context.Books
+                .Single(x => x.BookId == book.BookId)
+                .AuthorsLink.OrderBy(y => y.Order)
+                .Select(y => y.Author).ToList();
+
+            // Creates a comma-delimited string with the names from the Authors in the Boo
+            var newAuthorsOrdered =
+                string.Join(", ",
+					allAuthorsInOrder.Select(x =>
+						x.AuthorId == changedAuthor.AuthorId // Returns the list of author names, but replaces the changed Author's Name with the name provided in the callingEntity parameter
+						? changedAuthor.Name
+						: x.Name));
+
+            book.ResetAuthorsOrdered(newAuthorsOrdered); // Updates each Book's AuthorsOrdered property
+        }
+        
+        return null; // Returning null is a quick way to say that the event handler is always successful.
+    }
+}
+````
+
+As you can see, the `Author`'s `Name` event handler is much more complex and accesses the database multiple times, which is much slower than the `AddReview`/`RemoveReview` event handler. Therefore, you need to decide whether caching this value will provide an overall performance gain. In this case, the likelihood of updating an `Author`'s `Name` is small, so on balance, it is worthwhile to cache the list of author names for a book.
+
+
+
+#### Adding cache properties to the Book entity with concurrency handling
+
+The best way to handle the simultaneous-updates problem is to configure the three cache values as concurrency tokens. Two simultaneous updates of a cache value will throw a `DbUpdateConcurrencyException`, which then calls a concurrency handler written to correct the cache values to the right values.
+
+
+
+![](./diagrams/images/15_05_adding_cache_properties_to_book_entity_with_concurrency_handling.png)
+
+
+
+**CODE TO CAPTURE ANY EXCEPTION THROWN BY SAVECHANGES/SAVECHANGESASYNC**
+
+To capture `DbUpdateConcurrencyException`, you need to add a C# `try`/`catch` around the call to the `SaveChanges`/`SaveChangesAsync` methods. This addition allows you to call an exception handler to try to fix the problem that caused the exception or rethrow the exception if it can’t fix the problem. If your exception handler managed to fix the exception, you call `SaveChanges`/`SaveChangesAsync` again to update the database with your fix.
+
+In this specific case, you need to consider another issue: while you were fixing the first concurrency update, another concurrency update could have happened. Sure, this scenario is rather unlikely, but you must handle it; otherwise, the second call to `SaveChanges`/`SaveChangesAsync` would fail. For this reason, you need a C# `do`/`while` outer loop to keep retrying the call to the `SaveChanges`/`SaveChangesAsync` method until it is successful or an exception that can’t be fixed occurs.
+
+
+
+````c#
+// A simplified version of the GenericEventRunner’s SaveChanges call
+private IStatusGeneric<int> // The returned value is a status, with int returned from SaveChanges.
+    CallSaveChangesWithExceptionHandler(DbContext context, Func<int> callBaseSaveChanges) // The base SaveChanges is provided to be called.
+{
+    var status = new StatusGenericHandler<int>(); // The status that will be returned
+    
+    do // The call to the SaveChanges is done within a do/while.
+    {
+        try
+        {
+            int numUpdated = callBaseSaveChanges(); // Calls the base SaveChanges
+            // If no exception occurs, sets the status result and breaks out of the do/while
+            status.SetResult(numUpdated);
+            break;
+        }
+        catch (Exception e) // The catch caches any exceptions that SaveChanges throws.
+        {
+            IStatusGeneric handlerStatus = … YOUR EXCEPTION HANDLER GOES HERE; // Your exception handler is called here, and it returns null or a status.
+            if (handlerStatus == null) // If the exception handler returns null, it rethrows the original exception...
+            {
+                throw;
+            }
+            status.CombineStatuses(handlerStatus); // ...otherwise, any errors from your exception handler are added to the main status.
+        }
+    } while (status.IsValid); // If the exception handler was successful, it loops back to try calling SaveChanges again.
+
+    return status;
+}
+````
+
+
+
+**TOP-LEVEL CONCURRENCY HANDLER THAT FINDS THE BOOK(S) THAT CAUSED THE EXCEPTION**
+
+Handling a concurrency issue involves several common parts, so you build a top-level concurrency handler to manage those parts.
+
+
+
+````c#
+// The top-level concurrency handler containing the common exception code
+public static IStatusGeneric HandleCacheValuesConcurrency(this Exception ex, DbContext context) // This extension method handles the Reviews and Author cached values concurrency issues.
+{
+    var dbUpdateEx = ex as DbUpdateConcurrencyException; // Casts the exception to a DbUpdateConcurrencyException
+    if (dbUpdateEx == null) // If the exception isn’t a Db.UpdateConcurrencyException, we return null to say that we can't handle that exception
+    {
+        return null;
+    }
+
+    foreach (var entry in dbUpdateEx.Entries) // Should be only one entity, but we handle many entities in case of bulk loading
+    {
+        if (!(entry.Entity is Book bookBeingWrittenOut)) // Casts the entity to a Book. If it isn't a Book, we return null to say the method can't handle it.
+        {
+            return null;
+        }
+
+        // Reads a nontracked version of the Book from the database. (Note the IgnoreQueryFilters, because it might have been soft-deleted.)
+        var bookThatCausedConcurrency = context.Set<Book>()
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .SingleOrDefault(p => p.BookId
+				== bookBeingWrittenOut.BookId);
+
+        // If no book was deleted, marks the current book as detached so it won't be updated
+        if (bookThatCausedConcurrency == null)
+        {
+            entry.State = EntityState.Detached;
+            continue;
+        }
+
+        var handler = new FixConcurrencyMethods(entry, context); // Creates the class containing the Reviews and AuthorsOrdered cached values
+
+        handler.CheckFixReviewCacheValues(bookThatCausedConcurrency, bookBeingWrittenOut); // Fixes any concurrency issues with the Reviews cached values
+
+        handler.CheckFixAuthorOrdered(bookThatCausedConcurrency, bookBeingWrittenOut); // Fixes any concurrency issues with the AuthorsOrdered cached value
+    }
+    
+    return new StatusGenericHandler(); // Returns a valid status to say that the concurrency issue was fixed
+}
+````
+
+
+
+**CONCURRENCY HANDLER FOR A PROBLEM WITH THE REVIEW’S CACHED VALUES**
+
+The `CheckFixReviewCacheValues` concurrency handler method deals only with the Review cached values. Its job is to combine the `Review` cached values in the entity that is being written out and the `Review` cached values that have been added to the database.
+
+This method uses the same delta update style used in the `Review` cached values event handler.
+
+
+
+````c#
+// The code to fix a concurrent update of the Review cached values
+public void CheckFixReviewCacheValues( // This method handles concurrency errors in the Reviews cached values.
+    Book bookThatCausedConcurrency, // This parameter is the Book from the database that caused the concurrency issue.
+    Book bookBeingWrittenOut) // This parameter is the Book you were trying to update.
+{
+    // Holds the count and votes in the database before the events changed them
+    var previousCount = (int)_entry
+        .Property(nameof(Book.ReviewsCount))
+        .OriginalValue;
+    var previousAverageVotes = (double)_entry
+        .Property(nameof(Book.ReviewsAverageVotes))
+        .OriginalValue;
+
+    // If the previous count and votes match the current database, there is no Review concurrency issue, so the method returns.
+    if (previousCount == bookThatCausedConcurrency.ReviewsCount
+        && previousAverageVotes == bookThatCausedConcurrency.ReviewsAverageVotes)
+    {
+        return;
+    }
+
+    // Works out the stars before the new update is applied
+    var previousTotalStars = Math.Round(previousAverageVotes * previousCount);
+
+    // Gets the change that the event was trying to make to the cached values
+    var countChange = bookBeingWrittenOut.ReviewsCount - previousCount;
+    var starsChange = Math.Round(bookBeingWrittenOut.ReviewsAverageVotes * bookBeingWrittenOut.ReviewsCount) - previousTotalStars;
+
+    // Works out the combined change from the current book and the other updates done to the database
+    var newCount = bookThatCausedConcurrency.ReviewsCount + countChange;
+    var newTotalStars = Math.Round(bookThatCausedConcurrency.ReviewsAverageVotes * bookThatCausedConcurrency.ReviewsCount) + starsChange;
+
+    // Sets the Reviews cached values with the recalculated values
+    _entry.Property(nameof(Book.ReviewsCount))
+        .CurrentValue = newCount;
+    _entry.Property(nameof(Book.ReviewsAverageVotes))
+        .CurrentValue = newCount == 0
+        ? 0 : newTotalStars / newCount;
+
+    // Sets the OriginalValues for the Review cached values to the current database
+    _entry.Property(nameof(Book.ReviewsCount))
+        .OriginalValue = bookThatCausedConcurrency
+        .ReviewsCount;
+    _entry.Property(nameof(Book.ReviewsAverageVotes))
+        .OriginalValue = bookThatCausedConcurrency.ReviewsAverageVotes;
+}
+````
+
+
+
+**CONCURRENCY HANDLER FOR A PROBLEM WITH THE AUTHORSSTRING CACHED VALUE**
+
+The `CheckFixAuthorsOrdered` concurrency handler method has the same format as the `CheckFixReviewCacheValues` method, but it deals with the `AuthorsOrdered` cached value. Its job is to combine the `AuthorsOrdered` cached value in the entity that is being written out and the `AuthorsOrdered` cached value that has been added to the database.
+
+
+
+````c#
+// The code to fix a concurrent update of the AuthorsOrdered cached value
+public void CheckFixAuthorsOrdered( // This method handles concurrency errors in the AuthorsOrdered cached value.
+    Book bookThatCausedConcurrency, // This parameter is the Book from the database that caused the concurrency issue.
+    Book bookBeingWrittenOut) // This parameter is the Book you were trying to update.
+{
+    // Gets the previous AuthorsOrdered string before the event updated it
+    var previousAuthorsOrdered = (string)_entry
+        .Property(nameof(Book.AuthorsOrdered))
+        .OriginalValue;
+
+    // If the previous AuthorsOrdered match the current database AuthorsOrdered, there is no AuthorsOrdered concurrency issue, so the method returns.
+    if (previousAuthorsOrdered == bookThatCausedConcurrency.AuthorsOrdered)
+    {
+        return;
+    }
+
+    // Gets the AuthorIds for each Author linked to this Book in the correct order
+    var allAuthorsIdsInOrder = _context.Set<Book>()
+        .IgnoreQueryFilters()
+        .Where(x => x.BookId == bookBeingWrittenOut.BookId)
+        .Select(x => x.AuthorsLink
+			.OrderBy(y => y.Order)
+            .Select(y => y.AuthorId)).ToList()
+        .Single();
+
+    // Gets the Name of each Author, using the Find method
+    var namesInOrder = allAuthorsIdsInOrder
+        .Select(x => _context.Find<Author>(x).Name);
+
+    // Creates a comma-delimited list of authors
+    var newAuthorsOrdered = string.Join(", ", namesInOrder);
+
+    // From this, you can set the AuthorsOrdered cached value with the combined values.
+    _entry.Property(nameof(Book.AuthorsOrdered))
+        .CurrentValue = newAuthorsOrdered;
+
+    // Sets the OriginalValues for the AuthorsOrdered cached value to the current databas
+    _entry.Property(nameof(Book.AuthorsOrdered))
+        .OriginalValue = bookThatCausedConcurrency.AuthorsOrdered;
+}
+````
+
+The important part to point out is that you must read in the `Author` entity classes by using the `Find` method because the `Author` that created the update to the `AuthorsOrdered` cached value hasn’t yet been written to the database. `Find` is the only query method that will first inspect the current application’s DbContext for tracked entities to find the entity you want. The `Find` will load the tracked entity with that `AuthorId` instead of loading the version in the database that hasn’t been updated yet.
+
+
+
+#### Adding a checking/healing system to your event system
+
+
+
+![](./diagrams/images/15_06_adding_checking_healing_system_to_event_system.png)
+
+
+
+### Comparing the four performance approaches with development effort
+
+
+
+![](./diagrams/images/15_07_comparing_four_performance_approaches_with_development_effort.png)
+
+
+
+### Improving database scalability
+
+One basic fact about database scalability is that the quicker you make the database accesses, the more concurrent accesses the database can handle. Reducing the number of round trips to the database also reduces the load on the database. Fortunately the default query type has loaded any collections within one database access. Also, lazy loading might feel like a great time-saver, but it adds all those individual database accesses back in, and both scalability and performance suffer.
+
+But some large applications will have high concurrent database accesses, and you need a way out of this situation. The first, and easiest, approach is to pay for a more powerful database. If that solution isn’t going to cut it, here are some ideas to consider:
+
+* *Split your data over multiple databases*: Sharding your data If your data is segregated in some way (if you have a financial application that many small businesses use, for example), you could spread each business’s data over a different database - that is, one database for each business. This approach is called sharding.
+* *Split your database reads from your writes*: CQRS architecture Command and Query Responsibility Segregation (CQRS) architecture splits the database reads from the database writes. This approach allows you to optimize your reads and possibly use a separate database, or multiple read-only databases, on the CQRS read side.
+* *Mix NoSQL and SQL databases*: Polyglot persistence The cached SQL approach makes the Book entity look like a complete definition of a book that a JSON structure would hold. With a CQRS architecture, you could have used a relational database to handle any writes, but on any write, you could build a JSON version of the book and write it to a read-side NoSQL database or multiple databases. This approach, which might provide higher read performance, is one form of polyglot persistence.
+
+
+
+### Summary
+
+* If you build your LINQ queries carefully and take advantage of all its features, EF Core will reward you by producing excellent SQL code.
+* You can use EF Core’s `DbFunction` feature to inject a piece of SQL code held in an SQL UDF into a LINQ query. This feature allows you to tweak part of an EF Core query that’s run on the database server.
+* If a database query is slow, check the SQL code that EF Core is producing. You can obtain the SQL code by looking at the `Information` logged messages that EF Core produces.
+* If you feel that you can produce better SQL for a query than EF Core is producing, you can use several methods to call SQL from EF Core, or use Dapper to execute your SQL query directly.
+* If all other performance-tuning approaches don’t provide the performance you need, consider altering the database structure, including adding properties to hold cached values. But be warned: you need to be careful.
+* In addition to improving the time that a query takes, consider the scalability of your application—that is, supporting lots of simultaneous users. In many applications, such as ASP.NET Core, using async EF Core commands can improve scalability.
+
+
+
+
+
+## 16. Cosmos DB, CQRS, and other database types
+
+### The differences between relational and NoSQL databases
