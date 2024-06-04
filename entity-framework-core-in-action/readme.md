@@ -11136,4 +11136,386 @@ But some large applications will have high concurrent database accesses, and you
 
 ## 16. Cosmos DB, CQRS, and other database types
 
-### The differences between relational and NoSQL databases
+### Building a Command and Query Responsibility Segregation (CQRS) system
+
+
+
+![](./diagrams/images/16_01_building_cqrs_system.png)
+
+
+
+Because the CQRS architecture separates read and write operations, using one database for read operations and another for write operations is a logical step. The write side holds the data in a relational form, with no duplication of data (normalization) and the read side holds the data in a form that is appropriate for the user interface.
+
+This design creates good performance gains for reads but a performance cost on writes, making the two-database CQRS architecture appropriate when your business application has more reads of the data than writes.
+
+
+
+### The design of a two-database CQRS architecture application
+
+The fundamental issue in building any CQRS system is making sure that any changes to the data change the associated projection in the read-side CQRS database.
+
+Another approach is using integration events triggered by the DDD access methods. Here are some benefits of this approach:
+
+* *More robust* - Using integration events ensures that the SQL database is updated only when the Cosmos DB database has successfully updated its database. Applying both database updates within a transaction reduces the possibility that the Cosmos DB database will get out of step with the SQL write side.
+* *More obvious* - You trigger integration events inside the DDD methods that change the data. Each event tells the event handler whether it’s an `Add`, `Update`, or `Delete` (soft delete, in this case) of a `Book`. Then it’s easy to write the event handler to `Add`, `Update`, or `Delete` a `Book` projection in the Cosmos DB.
+* *Simpler* - As already stated, sending integration events is much simpler than making detected changes via the `State` of the tracked entities.
+
+
+
+![](./diagrams/images/16_02_design_of_two_database_cqrs_architecture_application.png)
+
+
+
+#### Creating an event to trigger when the SQL Book entity changes
+
+````c#
+// The BookChangedEvent sending Add, Update, and Delete changes
+public enum BookChangeTypes { Added, Updated, Deleted } // The three types of changes that need mapping to the Cosmos DB database
+
+[RemoveDuplicateEvents] // This attribute causes the GenericEventRunner to remove duplicate events from the same Book instance.
+public class BookChangedEvent : IEntityEvent // When an event is created, you must say what type of change the Book has gone through.
+{
+    // Used by the event handler to work out whether to add, update, or delete the CosmosBook
+    public BookChangedEvent(BookChangeTypes bookChangeType)
+    {
+        BookChangeType = bookChangeType;
+    }
+
+    public BookChangeTypes BookChangeType { get; } // Holds the type of change for the event handler to use
+}
+````
+
+
+
+#### Adding events to the Book entity send integration events
+
+````c#
+// Adding a BookUpdate to a Book’s AddPromotion method
+public IStatusGeneric AddPromotion(decimal actualPrice, string promotionalText)
+{
+    var status = new StatusGenericHandler();
+    if (string.IsNullOrWhiteSpace(promotionalText))
+    {
+        return status.AddError("You must provide text to go with the promotion.", nameof(PromotionalText));
+    }
+
+    ActualPrice = actualPrice;
+    PromotionalText = promotionalText;
+    
+    if (status.IsValid) // You don’t want to trigger unnecessary updates, so you trigger only if the change was valid.
+    {
+        // Adds a BookChangedEvent event with the Update setting as a During (integration) event
+        AddEvent(new BookChangedEvent(BookChangeTypes.Updated), EventToSend.DuringSave);
+    }
+    
+    return status;
+}
+````
+
+
+
+For the delete event, you are using a soft delete, so you capture a change to the `SoftDeleted` property via its access method. The options are
+
+* If the `SoftDeleted` value isn’t changed, no event is sent.
+* If the `SoftDeleted` value is changed to `true`, a `Deleted` event is sent.
+* If the `SoftDeleted` value is changed to `false`, an `Added` event is sent.
+
+````c#
+// A change of SoftDeleted that triggers an AddBook or DeleteBook event
+public void AlterSoftDelete(bool softDeleted)
+{
+    if (SoftDeleted != softDeleted) // You don’t trigger unnecessary updates, so you trigger only if there was a change to the SoftDeleted property.
+    {
+        // The type of event to send depends on the new SoftDelete setting.
+        var eventType = softDeleted
+            ? BookChangeTypes.Deleted
+            : BookChangeTypes.Added;
+
+        // Adds the BookChangedEvent event as a During (integration) event
+        AddEvent(new BookChangedEvent(eventType), EventToSend.DuringSave);
+    }
+    SoftDeleted = softDeleted;
+}
+````
+
+
+
+#### Using the EfCore.GenericEventRunner to override your BookDbContext
+
+The Cached SQL approach and this CQRS approach can coexist, with each part having no knowledge of the other - another example of applying the SoC principle.
+
+
+
+#### Creating the Cosmos entity classes and DbContext
+
+Because adding, updating, and deleting entries in the Cosmos database use similar code, you build a service that contains three methods, one for each type of update. Putting all the update code in a service makes the event handler simple.
+
+
+
+````c#
+// An example Cosmos event handler that handles an Add event
+public class BookChangeHandlerAsync : IDuringSaveEventHandlerAsync<BookChangedEvent> // Defines the class as a During (integration) event for the BookChanged event
+{
+    private readonly IBookToCosmosBookService _service; // This service provides the code to Add, Update, and Delete a CosmosBook.
+
+    public BookChangeHandlerAsync(IBookToCosmosBookService service)
+    {
+        _service = service;
+    }
+
+    public async Task<IStatusGeneric> HandleAsync(object callingEntity, BookChangedEvent domainEvent, Guid uniqueKey) // The event handler uses async, as Cosmos DB uses async.
+    {
+        var bookId = ((Book)callingEntity).BookId; // Extracts the BookId from the calling entity, which is a Book
+        switch (domainEvent.BookChangeType) // The BookChangeType can be added, updated, or deleted.
+        {
+            case BookChangeTypes.Added:
+                await _service.AddCosmosBookAsync(bookId); // Calls the Add part of the service with the BookId of the SQL Book
+                break;
+            case BookChangeTypes.Updated:
+                await _service.UpdateCosmosBookAsync(bookId); // Calls the Update part of the service with the BookId of the SQL Book
+                break;
+            case BookChangeTypes.Deleted:
+                await _service.DeleteCosmosBookAsync(bookId); // Calls the Delete part of the service with the BookId of the SQL Book
+                break;
+            default:
+                throw new ArgumentOutOfRangeException();
+        }
+
+        return null; // Retuning null tells the GenericEventRunner that this method is always successful.
+    }
+}  
+````
+
+
+
+````c#
+// Creating a projection of the SQL Book and adding it to the Cosmos database
+public async Task UpdateCosmosBookAsync(int bookId) // This method is called by the BookUpdated event handler with the BookId of the SQL book.
+{
+    // The Book App can be run without access to Cosmos DB, in which case it exits immediately.
+    if (CosmosNotConfigured)
+    {
+        return;
+    }
+
+    var cosmosBook = await MapBookToCosmosBookAsync(bookId); // This method uses a Select method on a CosmosBook entity class.
+
+    if (cosmosBook != null) // If the CosmosBook is successfully filled, the Cosmos update code is executed.
+    {
+        // Updates the CosmosBook to the cosmosContext and then calls a method to save it to the database
+        _cosmosContext.Update(cosmosBook);
+        await CosmosSaveChangesWithChecksAsync(WhatDoing.Updating, bookId);
+    }
+    else
+    {
+        // If the SQL book wasn’t found, we ensure that the Cosmos database version was removed.
+        await DeleteCosmosBookAsync(bookId);
+    }
+}
+````
+
+
+
+````c#
+// Part of the handling of SaveChanges exceptions with Cosmos DB
+private async Task CosmosSaveChangesWithChecksAsync( // Calls SaveChanges and handles certain states
+    WhatDoing whatDoing, int bookId) // The whatDoing parameter tells the code whether this is an Add, Update, or Delete.
+{
+    try
+    {
+        await _cosmosContext.SaveChangesAsync();
+    }
+    catch (CosmosException e) // Catches any CosmosExceptions
+    {
+        if (e.StatusCode == HttpStatusCode.NotFound && whatDoing == WhatDoing.Updating) // Catches an attempt to update a CosmosBook that wasn’t there
+       {
+            // You need to remove the attempted update; otherwise, EF Core will throw an exception.
+            var updateVersion = _cosmosContext
+                .Find<CosmosBook>(bookId);
+            _cosmosContext.Entry(updateVersion)
+                .State = EntityState.Detached;
+
+            await AddCosmosBookAsync(bookId); // Turns the Update into an Add
+        }
+        else if (e.StatusCode == HttpStatusCode.NotFound && whatDoing == WhatDoing.Deleting) // Catches the state where the CosmosBook was already deleted...
+        {
+            //Do nothing as already deleted
+        }
+        else // ...otherwise, not an exception state you can handle, so rethrow the exception
+        {
+            throw;
+        }
+    }
+    catch (DbUpdateException e) // If you try to add a new CosmosBook that’s already there, you get a DbUpdateException.
+    {
+        var cosmosException = e.InnerException as CosmosException; // The inner exception contains the CosmosException.
+        if (cosmosException?.StatusCode == HttpStatusCode.Conflict && whatDoing == WhatDoing.Adding) // Catches an Add where there is already a CosmosBook with the same key
+        {
+            //… rest of code left out as nothing new there
+        }
+    }
+}
+````
+
+
+
+### Understanding the structure and data of a Cosmos DB account
+
+#### How the CosmosClass is stored in Cosmos DB
+
+````json
+// The CosmosBook data stored as JSON in Cosmos DB
+{
+    // The standard properties from the CosmosBook class
+    "BookId": 214,
+    "ActualPrice": 59.99,
+    "AuthorsOrdered": "Jon P Smith",
+    "EstimatedDate": true,
+    "OrgPrice": 59.99,
+    "PromotionalText": null,
+    "PublishedOn": "2021-05-15T05:00:00+01:00",
+    "ReviewsAverageVotes": 5,
+    "ReviewsCount": 1,
+    "Title": "Entity Framework Core in Action, Second Edition",
+
+    // Holds the collection of Tags, which are configured as an owned type
+    "Tags": [
+        {
+            "TagId": "Databases"
+        },
+        {
+            "TagId": "Microsoft & .NET"
+        }
+    ],
+
+    // These two properties are added to overcome some limitations in the EF Core Cosmos provider.
+    "YearPublished": 2021,
+    "TagsString": "| Databases | Microsoft & .NET |",
+
+    "Discriminator": "CosmosBook", // EF Core adds the discriminator to differentiate this class from other classes saved In the same Cosmos container.
+
+    "id": "CosmosBook|214", // The id is the database’s primary key and must be unique. This id is set by EF Core, using the EF Core designated primary key and the discriminator.
+
+    // Cosmos-specific properties
+    "_rid": "QmRlAMizcQmwAg…",
+    "_self": "dbs/QmRlAA==/colls/QmRlAMizcQk=…",
+    "_etag": "\"1e01b788-0000-1100-0000-5facfa2f0000\"",
+    "_ts": 1605171759,
+    "_attachments": "attachments/"
+}
+````
+
+* The `id` key/value is the unique key used to define this data. EF Core fills the unique key with a value - by default, a combination of the `Discriminator` value and the value from the property(s) that you told EF Core is the primary key of this entity class.
+* The `_etag` key/value can be used with the `UseETagConcurrency` Fluent API method to provide a concurrency token covering any change in the data.
+* The `_ts` key/value contains the time of the last `Add`/`Update` in Unix format and is useful for finding when an entry last changed. The `_ts` value can be converted to C# `DateTime` format by using the `UnixDateTimeConverter` class.
+* The `_rid` and `_self` key/value are unique identifiers used internally for navigation and resources.
+* The `_attachments` key/value is depreciated and is there only for old systems.
+
+
+
+### Displaying books via Cosmos DB
+
+#### Cosmos DB differences from relational databases
+
+**THE COSMOS DB PROVIDES ONLY ASYNC METHODS**
+
+Because Cosmos DB uses HTTP to access databases, all the methods in the Cosmos DB .NET SDK use async/await, and there are no sync versions. EF Core does provide access to Cosmos DB via EF Core’s sync methods, such as `ToList` and `SaveChanges`, but these methods currently use the `Task`’s `Wait` method, which can have deadlock problems.
+
+
+
+**COSMOS DIFFERENCE: THERE ARE NO DATABASE-CREATED PRIMARY KEYS**
+
+In Cosmos and many other NoSQL databases, by default, the key for an item (item is Cosmos’s name for each JSON entry) must be generated by the software before you add an item. The key for an item must be unique, and Cosmos will reject (with the HTTP code Conflict) a new item if its key was already used. Also, after you have added an item with a key, you can’t change the key.
+
+
+
+**COMPLEX QUERIES MAY NEED BREAKING UP**
+
+In the filter-by-year option in the book display, the `FilterDropdownService` finds all the years when books were published. This task requires a series of steps:
+
+1. Filter out any books that haven’t yet been published.
+2. Extract the `Year` part of the `Book`'s `PublishedOn` `DateTime` property.
+3. Apply the LINQ `Distinct` command to obtain the years for all the published books.
+4. Order the years.
+
+This complex query works in SQL, but Cosmos DB can’t handle it.
+
+The strength of a Cosmos DB database is its scalability and availability, not its ability to handle complex queries.
+
+
+
+**SKIP IS SLOW AND EXPENSIVE**
+
+In the Book App, we used paging to allow the user to move through the books display. This type of query uses the LINQ `Skip` and `Take` methods to provide paging. The query `context.Books.Skip(100).Take(10)`, for example, would return the 101st to 111th books in a sequence. Cosmos DB can do this too, but the `Skip` part gets slower as the skip value gets bigger (another difference from relational databases) and is expensive too.
+
+
+
+**BY DEFAULT, ALL PROPERTIES ARE INDEXED**
+
+Cosmos DB’s default setup is to index all the key/values, included nested key values. You can change the Cosmos DB indexing policy, but "index all" is a good starting point.
+
+
+
+#### Cosmos DB/EF Core difference: Migrating a Cosmos database
+
+At some point, you are going to change or add properties to an entity class mapped to a Cosmos DB database. You must be careful, though; otherwise, you could break some of your existing Cosmos DB queries. This example shows what can go wrong and how to fix it:
+
+1. You have a `CosmosBook` entity class, and you have written data to a Cosmos DB database.
+2. You decide that you need an additional property called `NewProperty` of type `int` (but it could be any non-nullable type).
+3. You read back old data that was added before the `NewProperty` property was added to the `CosmosBook` entity class.
+4. At this point, you get an exception saying something like `object must have a value`.
+
+Cosmos DB doesn’t mind your having different data in every item, but EF Core does. EF Core expects a `NewProperty` of type int, and it’s not there. The way around this problem is to make sure that any new properties are nullable; then reading the old data will return a `null` value for the new properties. If you want the new property to be non-nullable, start with a nullable version and then update every item in the database with a non-null value for the new property. After that, you can change the new property back to a non-nullable type, and because there is a value for that property in every item, all your queries will work.
+
+Another point is that you can’t use the `Migrate` command to create a new Cosmos DB database, because EF Core doesn’t support migrations for a Cosmos DB database. You need to use the `EnsureCreatedAsync` method instead. The `EnsureCreatedAsync` method is normally used for unit testing, but it’s the recommended way to create a database (Cosmos DB container) when working with Cosmos DB.
+
+
+
+#### EF Core Cosmos DB database provider limitations
+
+* Counting the number of books in Cosmos DB is slow!
+* Many database functions are not implemented.
+* EF Core cannot do subqueries on a Cosmos DB database.
+* There are no relationships or `Includes`.
+
+
+
+### Was using Cosmos DB worth the effort? Yes!
+
+#### How difficult would it be to use this two-database CQRS design in your application?
+
+* *Detecting changes to an SQL `Book`* - This part was made easy by the use of DDD classes, as I could add an event to each access method in the `Book` entity class. If you aren’t using DDD classes, you would need to detect changes to entities during `SaveChangesAsync`.
+* *Writing to the Cosmos DB database* - That part was fairly easy, with some straightforward `Add`, `Update`, and `Delete` methods.
+* *Querying the Cosmos DB database* - This part took the most time, mainly because there are limitations in EF Core and in Cosmos DB.
+
+
+
+### Summary
+
+* A NoSQL database is designed to be high-performance in terms of speed, scalability, and availability. It achieves this performance by dropping relational-database features such as strongly linked relationships between tables.
+* A CQRS architecture separates the read operations from the write operations, which allows you to improve the read side’s performance by storing the data in a form that matches the query, known as a projection.
+* The Book App has been augmented by the ability to store a projection of the SQL Book on the read side of the CQRS architecture, which uses a Cosmos DB database. This approach improves performance, especially with lots of entries.
+* The design used to implement the SQL/Cosmos DB CQRS architecture uses an integration event.
+* The Cosmos DB database works differently from relational databases, and the process of adding this database to the Book App exposes many of these differences.
+* The EF Core Cosmos DB database provider has many limitations, which are discussed and overcome in this chapter. But it is still possible to implement a useful app with Cosmos DB.
+* The updated Book App shows that the Cosmos DB database can provide superior read performance over a similarly priced SQL Server database.
+* The SQL/Cosmos DB CQRS design is suitable for adding to an existing application where read-side performance needs a boost, but it does add a time cost to every addition or update of data.
+* Relational databases are more like one another than they are like NoSQL databases, due to the standardization of the SQL language. But you need to make some changes and checks if you change from one type of relational database to another.
+
+
+
+
+
+## 17. Unit testing EF Core applications
+
+* Simulating a database for unit testing
+* Using the database type as your production app for unit testing
+* Using an SQLite in-memory database for unit testing
+* Solving the problem of one database access breaking another part of your test
+* Capturing logging information while unit testing
+
+
+
+### An introduction to the unit test setup
+
+#### The test environment: xUnit unit test library
