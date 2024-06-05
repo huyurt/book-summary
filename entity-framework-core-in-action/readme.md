@@ -11519,3 +11519,869 @@ Another point is that you can’t use the `Migrate` command to create a new Cosm
 ### An introduction to the unit test setup
 
 #### The test environment: xUnit unit test library
+
+The static `Assert` methods are built into XUnit; the fluent validation style has to be added as an extra step.
+
+| Type                         | Example Code                      |
+| ---------------------------- | --------------------------------- |
+| Fluent validation style      | `books.Count().ShouldEqual(2);`   |
+| Static `Assert` method style | `Assert.Equal(2, books.Count());` |
+
+
+
+````c#
+// A simple example xUnit unit test method
+[Fact] // The [Fact] attribute tells the unit test runner that this method is an xUnit unit test that should be run.
+public void DemoTest() // The method must be public. It should return void or, if you're running async methods, a Task.
+{
+    //SETUP
+    const int someValue = 1; // Typically, you put code here that sets up the data and/or environment for the unit test.
+
+    //ATTEMPT
+    var result = someValue * 2; // This line is where you run the code you want to test.
+
+    //VERIFY
+    result.ShouldEqual(2); // Here is where you put the test(s) to check that the result of your test is correct.
+}
+````
+
+
+
+### Getting your application’s DbContext ready for unit testing
+
+Before you can unit test your application’s DbContext with a database, you need to ensure that you can alter the database connection string. Otherwise, you can’t provide a different database(s) for unit testing.
+
+
+
+#### The application’s DbContext options are provided via its constructor
+
+If the options are provided via the application’s DbContext constructor, you don’t need any changes to the application’s DbContext to work with the unit test. You already have total control of the options given to the application’s DbContext constructor; you can change the database connection string, the type of database provider it uses, and so on.
+
+
+
+````c#
+// An application DbContext that uses a constructor for option setting
+public class EfCoreContext : DbContext
+{
+    public EfCoreContext(
+        DbContextOptions<EfCoreContext> options)
+        : base(options) {}
+
+    public DbSet<Book> Books { get; set; }
+    public DbSet<Author> Authors { get; set; }
+
+    //… rest of the class left out
+}
+````
+
+For this type of application’s DbContext, the unit test can create the options variable and provide that value as a parameter in the application’s DbContext constructor.
+
+````c#
+// Creating a DbContext by providing the options via a constructor
+const string connectionString // Holds the connection string for the SQL Server database
+    = "Server= … content removed as too long to show";
+var builder = new
+    DbContextOptionsBuilder<EfCoreContext>(); // You need to create the DbContextOptionsBuilder<T> class to build the options.
+builder.UseSqlServer(connectionString); // Defines that you want to use the SQL Server database provider
+var options = builder.Options; // Builds the final DbContextOptions<EfCoreContext> options that the application’s DbContext needs
+using (var context = new EfCoreContext(options)) // Allows you to create an instance for your unit tests
+{
+    //… unit test starts here
+````
+
+
+
+#### Setting an application’s DbContext options via OnConfiguring
+
+If the database options are set in the `OnConfiguring` method inside the application’s DbContext, you must modify your application’s DbContext before you can use it in unit testing.
+
+
+
+````c#
+// A DbContext that uses the OnConfiguring method to set options
+public class DbContextOnConfiguring : DbContext
+{
+    private const string connectionString
+        = "Server=(localdb)\\... shortened to fit";
+
+    protected override void OnConfiguring
+        DbContextOptionsBuilder optionsBuilder)
+    {
+        optionsBuilder.UseSqlServer(connectionString);
+        base.OnConfiguring(optionsBuilder);
+    }
+    // … other code removed
+}
+````
+
+
+
+The next listing shows Microsoft’s recommended way to change a DbContext that uses the `OnConfiguring` method to set up the options.
+
+````c#
+// An altered DbContext allowing the connection string to be set by the unit test
+public class DbContextOnConfiguring : DbContext
+{
+    private const string ConnectionString
+        = "Server=(localdb)\\ … shortened to fit";
+
+    protected override void OnConfiguring(
+        DbContextOptionsBuilder optionsBuilder)
+    {
+        if (!optionsBuilder.IsConfigured) // Changes the OnConfigured method to run its normal setup code only if the options aren't already configured
+        {
+            optionsBuilder
+                .UseSqlServer(ConnectionString);
+        }
+    }
+
+    // Adds the same constructor-based options settings that the ASP.NET Core version has, which allows you to set any options you want
+    public DbContextOnConfiguring(
+        DbContextOptions<DbContextOnConfiguring> options)
+        : base(options) { }
+
+    public DbContextOnConfiguring() { } // Adds a public, parameterless constructor so that this DbContext works normally with the application
+    // … other code removed
+}
+````
+
+````c#
+// A unit test providing a different connection string to the DbContext
+const string connectionString // Holds the connection string for the database to be used for the unit test
+    = "Server=(localdb)\\... shortened to fit";
+var builder = new
+    DbContextOptionsBuilder<DbContextOnConfiguring>();
+builder.UseSqlServer(connectionString);
+var options = builder.Options;
+using (var context = new DbContextOnConfiguring(options)) // Provides the options to the DbContext via a new, oneparameter constructor
+{
+    //… unit test starts here
+````
+
+
+
+### Three ways to simulate the database when testing EF Core applications
+
+
+
+![](./diagrams/images/17_01_three_ways_to_simulate_database_when_testing_ef_core_applications.png)
+
+
+
+### Choosing between a production-type database and an SQLite in-memory database
+
+You should consider using an SQLite in-memory database because it is easier for unit testing, creating a new database every time. As a result:
+
+* The database schema is always up to date.
+* The database is empty, which is a good starting point for a unit test.
+* Running your unit tests in parallel works because each database is held locally in each test.
+* Your unit tests will run successfully in the Test part of a DevOps pipeline without any other settings.
+* Your unit tests are faster.
+
+The downside is that the SQLite database doesn’t support and/or match some SQL commands in your production database, so your unit tests will fail or, in a few cases, give you incorrect results. If this possibility worries you, you should ignore SQLite and use the same database type as your production database for unit testing.
+
+* *Wrong answer* - The feature might work but give you the wrong answer (which, in unit testing, is the worst result). You must be careful to run the test with a production-type database or make sure that you understand the limitations and work around them.
+* *Might break* - The feature might work correctly in your unit test code, but in some cases, it might throw an exception. You can test this feature with SQLite, but you might have to change to a production-type database if a unit test fails.
+* *Will break* - The feature is likely to fail when the database is set up (but might work if the SQL is basic). This result rules out using an SQLite in-memory database.
+
+
+
+The SQL features that EF Core can control but that aren’t going to work with SQLite, because SQLite doesn’t support the feature or because SQLite uses a different format from SQL Server, MySQL, and so on
+
+| SQL feature                   | SQLite support?                          | Breaks?      |
+| ----------------------------- | ---------------------------------------- | ------------ |
+| String compare and collations | Works but provides different results     | Wrong answer |
+| Different schemas             | Not supported; ignores config            | Wrong answer |
+| SQL column default value      | C# constants work; SQL is likely to fail | Might break  |
+| SQL computed columns          | SQL is different; likely to fail         | Will break   |
+| Any raw SQL                   | SQL is different; very likely to fail    | Will break   |
+| SQL sequences                 | Not supported exception                  | Will break   |
+
+Also, the following C# types aren’t natively supported by SQLite, so they could produce the wrong value:
+
+* Decimal
+* UInt64
+* DateTimeOffset
+* TimeSpan
+
+EF Core will throw an exception if you sort/filter on a property that is of type Decimal while running on SQLite, for example. If you still want to unit test with SQLite, you can add a value converter to convert the `Decimal` to a `double`, but that approach might not return the exact `Decimal` value you saved to the database.
+
+
+
+### Using a production-type database in your unit tests
+
+#### Providing a connection string to the database to use for the unit test
+
+To access any database, you need a connection string. You could define a connection string as a constant and use that, but as you’ll see, that approach isn’t as flexible as you’d want. Therefore, in this section you’ll mimic what ASP.NET Core does by adding to your test project a simple appsettings.json file that holds the connection string. Then you’ll use some of the .NET configuration packages to access the connection string in your application. The appsettings.json file looks something like this:
+
+````json
+{
+    "ConnectionStrings": {
+        "UnitTestConnection": "Server=(localdb)\\mssqllocaldb;Database=... etc"
+    }
+}
+````
+
+````c#
+// GetConfiguration method allowing access to the appsettings.json file
+public static IConfigurationRoot GetConfiguration() // Returns IConfigurationRoot, from which you can use methods such as GetConnectionString("ConnectionName") to access the configuration information
+{
+    var callingProjectPath =
+        TestData.GetCallingAssemblyTopLevelDir(); // In the TestSupport library, a method returns the absolute path of the calling assembly's top-level directory (the assembly that you're running your tests in).
+    var builder = new ConfigurationBuilder()
+        .SetBasePath(callingProjectPath)
+        .AddJsonFile("appsettings.json", optional: true); // Uses ASP.NET Core's ConfigurationBuilder to read that appsettings.json file. It's optional, so no error is thrown if the configuration file doesn't exist.
+    return builder.Build(); // Calls the Build method, which returns the IConfigurationRoot type
+}
+````
+
+You can use the `GetConfigration` method to access the connection string and then use this code to create an application's DbContext:
+
+````c#
+var config = AppSettings.GetConfiguration();
+config.GetConnectionString("UnitTestConnection");
+var builder = new DbContextOptionsBuilder<EfCoreContext>();
+builder.UseSqlServer(connectionString);
+using var context = new EfCoreContext(builder.Options);
+// … rest of unit test left out
+````
+
+That code solves the problem of getting a connection string, but you still have the problem of having different databases for each test class because by default, xUnit runs unit tests in parallel.
+
+
+
+#### Providing a database per test class to allow xUnit to run tests in parallel
+
+Because xUnit can run each class of unit tests in parallel, using one database for all your tests wouldn’t work. Good unit tests need a known starting point and should return a known result, which rules out using one database, as different tests will simultaneously change the database.
+
+One common solution is to have separately named databases for each unit test class or possibly each unit test method. The EfCore.TestSupport library contains methods that produce an SQL Server `DbContextOptions<T>` result in which the database name is unique to a test class or method. The first method creates a database with a name unique to this class, and the second one produces a database with a name that’s unique to that class and method.
+
+The result of using either of these classes is that each test class or method has its own uniquely named database. So when unit tests are run in parallel, each test class has its own database to test against.
+
+
+
+![](./diagrams/images/17_02_providing_database_per_test_class_to_allow_xunit_to_run_tests_in_parallel.png)
+
+
+
+````c#
+// CreateUniqueClassOptions extension method with a helper
+public static DbContextOptions<T>
+    CreateUniqueClassOptions<T>( // Returns options for an SQL Server database with a name starting with the database name in the original connection string in the appsettings.json file, but with the name of the class of the instance provided in the first parameter
+    	this object callingClass, // It's expected that the object instance provided will be this—the class in which the unit test is running.
+    	Action<DbContextOptionsBuilder<T>> builder = null) // This parameter allows you to add more option methods while building the options.
+    where T : DbContext
+{
+    // Calls a private method shared between this method and the CreateUniqueMethodOptions options
+    return CreateOptionWithDatabaseName<T>(callingClass, builder);
+}
+
+private static DbContextOptions<T>
+    CreateOptionWithDatabaseName<T>( // Builds the SQL Server part of the options, with the correct database name
+    	object callingClass,
+    	Action<DbContextOptionsBuilder<T>> extraOptions,
+    	string callingMember = null) // These parameters are passed from CreateUniqueClassOptions. For CreateUniqueClassOptions, the calling method is left as null.
+    where T : DbContext
+{
+    var connectionString = callingClass
+        .GetUniqueDatabaseConnectionString(callingMember); // Returns the  connection string from the appsetting.json file, but with the database name modified to use the callingClass's type name as a suffix
+    var builder = new DbContextOptionsBuilder<T>(); // Sets up OptionsBuilder and creates an SQL Server database provider with the connection string
+    builder.UseSqlServer(connectionString);
+    builder.ApplyOtherOptionSettings(); // Calls a general method used on all your option builders, enabling sensitive logging and better error messages
+    extraOptions?.Invoke(builder); // Applies any extra option methods that the caller provided
+    return builder.Options; // Returns the DbContextOptions<T> to configure the application's DbContext
+}
+````
+
+xUnit’s parallel-running feature has some other constraints. The use of static variables (static constants are fine) to carry information causes problems, for example, as different tests may set a static variable to different values in parallel. Nowadays, we don’t use statics much because dependency injection fills that gap. But if you use static variables in your code, you should turn off parallel running in xUnit so that you run unit tests serially.
+
+
+
+#### Making sure that the database’s schema is up to date and the database is empty
+
+You need a way to make sure that the database has an up-to-date schema and, at the same time, provide an empty database as a starting point for a unit test.
+
+
+
+````c#
+// The foolproof way to create a database that’s up to date and empty
+[Fact]
+public void TestExampleSqlDatabaseOk()
+{
+    //SETUP
+    var options = this
+        .CreateUniqueClassOptions<EfCoreContext>();
+    using (var context = new EfCoreContext(options))
+    {
+        context.Database.EnsureDeleted(); // Deletes the current database (if present)
+        context.Database.EnsureCreated(); // Creates a new database, using the configuration inside your application's DbContext
+        //… rest of test removed
+````
+
+
+
+`EnsureClean` method removes the current schema of the database by deleting all the SQL indexes, constraints, tables, sequences, UDFs, and so on in the database. Then, by default, it calls the `EnsureCreated` method to return a database that has the correct schema and is empty of data.
+
+````c#
+// Using the EnsureClean method to update the database’s schema
+[Fact]
+public void TestExampleSqlServerEnsureClean()
+{
+    //SETUP
+    var options = this.
+        CreateUniqueClassOptions<BookDbContext>();
+
+    using var context = new BookDbContext(options);
+
+    context.Database.EnsureClean(); // Wipes the data and schema in the database and then calls EnsureCreated to set up the correct schema
+
+    //… rest of test removed
+}
+````
+
+`EnsureClean` approach is faster, maybe twice as fast as the `EnsureDeleted`/`EnsureCreated` version, which could make a big difference in how long your unit tests take to run. It’s also better when your database server doesn’t allow you to delete or create new databases but does allow you to read/write a database, such as when your test databases are on an SQL server on which you don’t have admin privileges.
+
+
+
+The final approach works by applying changes to the database only within a transaction. It works because when the transaction is disposed, if you haven’t called the `transaction.Commit` method, it rolls back all the changes made in a database while the transaction is active. As a result, each unit test starts with the same data every time.
+
+This approach is useful if you have an example database, maybe copied from the production database (with personal data anonymized, of course), that you want to test against, but you don’t want the example database to be changed.
+
+
+
+````c#
+// Using a transaction to roll back any database changes made in the test
+[Fact]
+public void TestUsingTransactionToRollBackChanges()
+{
+    //SETUP
+    var builder = new
+        DbContextOptionsBuilder<BookDbContext>();
+    builder.UseSqlServer(_connectionString);
+    using var context = new BookDbContext(builder.Options);
+
+    using var transaction = context.Database.BeginTransaction(); // The transaction is held in a user var variable, which means that it will be disposed when the current block ends.
+
+    //ATTEMPT
+    var newBooks = BookTestData
+        .CreateDummyBooks(10);
+    context.AddRange(newBooks);
+    context.SaveChanges();
+
+    //VERIFY
+    context.Books.Count().ShouldEqual(4+10);
+} // When the unit test method ends, the transaction will be disposed and will roll back the changes made in the unit test. In this case, four books were already in the database.
+````
+
+
+
+#### Mimicking the database setup that EF Core migration would deliver
+
+If you use a UDF in your code, for example, how do you get that SQL into your unit test database? You have three solutions:
+
+* For simple SQL, such as a UDF, you can execute a script file after the `EnsureCreated` method.
+* If you’ve added your SQL to the EF Core migration files, you should call context.Database.Migrate instead of `….EnsureCreated`.
+* If you’re using script-based migrations, instead of calling `EnsureCreated`, you should execute the scripts to build the database.
+
+
+
+````sql
+-- An example SQL script file with GO at the end of each SQL command
+-- Removes existing version of the UDF you want to add. If you don’t do this, the create function will fail.
+IF OBJECT_ID('dbo.AuthorsStringUdf') IS NOT NULL
+DROP FUNCTION dbo.AuthorsStringUdf
+GO
+
+-- ExecuteScriptFileInTransaction looks for a line starting with GO to split out each SQL command to send to the database.
+CREATE FUNCTION AuthorsStringUdf (@bookId int) -- Adds a user-defined function to the database
+RETURNS NVARCHAR(4000)
+-- … SQL commands removed to make the example shorter
+RETURN @Names
+END
+GO
+````
+
+````c#
+// An example of applying an SQL script to a unit test database
+[Fact]
+public void TestApplyScriptExampleOk()
+{
+    var options = this
+        .CreateUniqueClassOptions<EfCoreContext>();
+    var filepath = TestData.GetFilePath("AddUserDefinedFunctions.sql"); // Gets the file path of the SQL script file via your TestData's GetFilePath method
+    using (var context = new EfCoreContext(options))
+    {
+        context.Database.EnsureDeleted();
+        context.Database.EnsureCreated();
+        context.ExecuteScriptFileInTransaction(filepath); // Applies your script to the database by using the ExecuteScriptFileInTransaction method
+
+        //… the rest of the unit test left out
+    }
+}
+````
+
+
+
+### Using an SQLite in-memory database for unit testing
+
+SQLite has a useful option for creating an in-memory database. This option allows a unit test to create a new database in-memory, which means that it’s isolated from any other database. This approach solves all the problems of running parallel tests, having an up-to-date schema, and ensuring that the database is empty, and it’s fast.
+
+To make an SQLite database in-memory, you need to set DataSource to "`:memory:`".
+
+````c#
+// Creating SQLlite in-memory database DbContextOptions<T> options
+public static DbContextOptionsDisposable<T> CreateOptions<T> // A class containing the SQLite in-memory options, which is also disposable
+    (Action<DbContextOptionsBuilder<T>> builder = null) // This parameter allows you to add more option methods while building the options.
+    where T : DbContext
+{
+    // Gets the DbContextOptions<T> and returns a disposable version
+    return new DbContextOptionsDisposable<T>
+        (SetupConnectionAndBuilderOptions<T>(builder)
+         	.Options);
+}
+
+private static DbContextOptionsBuilder<T>
+    SetupConnectionAndBuilderOptions<T> // This method builds the SQLite in-memory options.
+    (Action<DbContextOptionsBuilder<T>> applyExtraOption) // Contains any extra option methods the user provided
+    where T : DbContext
+{
+    // Creates an SQLite connection string with the DataSource set to ":memory:"
+    var connectionStringBuilder =
+        new SqliteConnectionStringBuilder
+    		{ DataSource = ":memory:" };
+    var connectionString = connectionStringBuilder.ToString(); // Turns the SQLiteConnectionStringBuilder into a connection string
+    var connection = new SqliteConnection(connectionString); // Forms an SQLite connection by using the connection string
+    connection.Open(); // You must open the SQLite connection. If you don’t, the in-memory database won't work.
+
+    // create in-memory context
+    var builder = new DbContextOptionsBuilder<T>();
+    builder.UseSqlite(connection); // Builds a DbContextOptions<T> with the SQLite database provider and the open connection
+    builder.ApplyOtherOptionSettings(); // Calls a general method used on all your option builders, enabling sensitive logging and better error messages
+    applyExtraOption?.Invoke(builder); // Adds any extra options the user added
+
+    return builder; // Returns the DbContextOptions<T> to use in the creation of your application's DbContext
+}
+````
+
+Then you can use the `SQLiteInMemory.CreateOptions` method in one of your unit tests, as shown in the next listing. You should note that in this case, you need to call only the `EnsureCreated` method, because no database currently exists.
+
+````c#
+// Using an SQLite in-memory database in an xUnit unit test
+[Fact]
+public void TestSQLiteOk()
+{
+    //SETUP
+    var options = SQLiteInMemory
+        .CreateOptions<EfCoreContext>(); // The SQLiteInMemory.CreateOptions provides the options for an in-memory database. The options are also IDisposable.
+
+    using var context = new BookDbContext(options); // Uses that option to create your application's DbContext
+
+    context.Database.EnsureCreated(); // You call context.Database.EnsureCreated to create the database.
+
+    //ATTEMPT
+    context.SeedDatabaseFourBooks(); // Runs a test method you've written that adds four test books to the database
+
+    //VERIFY
+    context.Books.Count().ShouldEqual(4); // Checks that your SeedDatabaseFourBooks worked and adds four books to the database
+}
+````
+
+
+
+### Stubbing or mocking an EF Core database
+
+* *Stubbing* a database means creating some code that replaces the current database. Stubbing works well when you are using a repository pattern.
+* *Mocking* usually requires a mocking library such as Moq, which you use to take control of the class you are mocking. This task is basically impossible for EF Core; the closest library to mocking EF Core is EF Core’s in-memory database provider.
+
+The stub provides a lot more control of the database access, and you can more easily simulate various error conditions, but it does take longer to write the mocking and unit tests.
+
+
+
+````c#
+// A unit test providing a stub instance to the BizLogic
+[Fact]
+public void ExampleOfStubbingOk()
+{
+    //SETUP
+    var lineItems = new List<OrderLineItem>
+    {
+        new OrderLineItem {BookId = 1, NumBooks = 4}
+    };
+    var userId = Guid.NewGuid();
+    var input = new PlaceOrderInDto(true, userId, lineItems.ToImmutableList());
+
+    var stubDbA = new StubPlaceOrderDbAccess(); // Creates an instance of the mock database access code. This instance has numerous controls, but in this case, you use the default settings.
+    var service = new PlaceOrderAction(stubDbA); // Creates your PlaceOrderAction instance, providing it a mock of the database access code
+
+    //ATTEMPT
+    service.Action(input); // Runs the PlaceOrderAction's method called Action, which takes in the input data and outputs an order
+
+    //VERIFY
+    service.Errors.Any().ShouldEqual(false); // Checks that the order placement completed successfully
+    mockDbA.AddedOrder.CustomerId
+        .ShouldEqual(userId); // Your mock database access code has captured the order that the PlaceOrderAction's method "wrote" to the database, so you can check whether it was formed properly.
+}
+````
+
+````c#
+// The stub database access code used for unit testing
+public class StubPlaceOrderDbAccess
+    : IPlaceOrderDbAccess // Mock MockPlaceOrderDbAccess implements the IPlaceOrderDbAccess, which allows it to replace the normal PlaceOrderDbAccess class.
+{
+    public ImmutableList<Book> DummyBooks { get; private set; } // Holds the dummy books that the mock uses, which can be useful if the test wants to compare the output with the dummy database
+
+    public Order AddedOrder { get; private set; } // Will contain the Order built by the PlaceOrderAction's method
+
+    public StubPlaceOrderDbAccess( // In this case, you set up the mock via its constructor.
+        bool createLastInFuture = false, // Allows you to check that a book that hasn't been published yet won't be accepted in an order
+        int? promoPriceFirstBook = null) // Allows you to add a PriceOffer to the first book so you can check that the correct price is recorded on the order
+    {
+        var numBooks = createLastInFuture
+            ? DateTime.UtcNow.Year - EfTestData.DummyBookStartDate.Year + 2
+            : 10; // Works out how to create enough books so that the last one isn't published yet
+        var books = EfTestData.CreateDummyBooks(numBooks, createLastInFuture); // Creates a method to create dummy books for your test
+        if (promotionPriceForFirstBook != null) // Adds a PriceOffer to the first book, if required
+        {
+            books.First().Promotion = new PriceOffer
+            {
+                NewPrice = (int) promoPriceFirstBook,
+                PromotionalText = "Unit Test"
+            };
+        }
+        DummyBooks = books.ToImmutableList();
+    }
+
+    public IDictionary<int, Book> FindBooksByIdsWithPriceOffers(IEnumerable<int> bookIds) // Called to get the books that the input selected; uses the DummyBooks generated in the constructor
+    {
+        return DummyBooks.AsQueryable()
+            .Where(x => bookIds.Contains(x.BookId))
+            .ToDictionary(key => key.BookId); // Similar code to the original, but in this case reads from the DummyBooks, not the database
+    }
+
+    // Called by the PlaceOrderAction’s method to write the Order to the database. In this case, you capture the Order so that the unit test can inspect it.
+    public void Add(Order newOrder)
+    {
+        AddedOrder = newOrder;
+    }
+}
+````
+
+
+
+### Seeding a database with test data to test your code correctly
+
+Often, a unit test needs certain data in the database before you can run a test. To test the code that handles orders for books, for example, you need some `Book`s in the database before you run the test. In cases like this one, you would add some code in the Setup stage of the unit test to add those books before you test the order code in the Verify stage.
+
+Here are some tips on seeding a unit test database:
+
+* It’s OK at the start to write the setup code in the unit test, but as soon as you find yourself copying that setup code, it’s time to turn that code into a method.
+* Keep your test-data setup methods up to date, refactoring them as you come across different scenarios.
+* Consider storing complex test data in a JSON file. I created a method to serialize data from a production system to a JSON file and have another method that will deserialize that data and write it to the database.
+* The `EnsureCreated` method will also seed the database with data configured via the `HasData` configuration.
+
+
+
+### Solving the problem of one database access breaking another stage of your test
+
+Every tracked database query (that is, a query without the `AsNoTracking` method in it) will try to reuse the instances of any the entities already tracking by the unit test's DbContext. The effect is that any tracked query can affect any tracked query after it, so it can affect the Attempt and Verify parts of your unit test.
+
+An example is the best way to understand this concept. Suppose that you want to test your code for adding a new `Review` to a `Book`, and you wrote the code shown in the following snippet:
+
+````c#
+var book = context.Books
+    .OrderBy(x => x.BookId).Last();
+book.Reviews.Add( new Review{NumStars = 5});
+context.SaveChanges();
+````
+
+But there’s a problem with this code: it has a bug. The code should have `Include(b => b.Reviews)` added to the first line to ensure that the current Reviews are loaded first.
+
+````c#
+// An INCORRECT simulation of a disconnected state, with the wrong result
+[Fact]
+public void INCORRECTtestOfDisconnectedState()
+{
+    //SETUP
+    var options = SqliteInMemory
+        .CreateOptions<EfCoreContext>();
+    using var context = new EfCoreContext(options);
+
+    // Sets up the test database with test data consisting of four books
+    context.Database.EnsureCreated();
+    context.SeedDatabaseFourBooks();
+
+    //ATTEMPT
+    var book = context.Books
+        .OrderBy(x => x.BookId).Last(); // Reads in the last book from your test set, which you know has two reviews
+    book.Reviews.Add(new Review { NumStars = 5 }); // Adds another Review to the book, which shouldn't work but does because the seed data is still being tracked by the DbContext instance
+    context.SaveChanges(); // Saves the Review to the database
+
+    //VERIFY
+    //THIS IS INCORRECT!!!!!
+    context.Books
+        .OrderBy(x => x.BookId).Last()
+        .Reviews.Count.ShouldEqual(3); // Checks that you have three Reviews, which works, but the unit test should have failed with an exception
+}
+````
+
+In fact, this unit test has two errors because of tracked entities:
+
+* *Attempt stage* - Should have failed because the `Reviews` navigational property was `null`, but works because of relational fixup from the Setup stage
+* *Verify stage* - Should fail if a `context.SaveChanges` call was left out, but works because of relational fixup from the Attempt stage
+
+
+
+#### Test code using ChangeTracker.Clear in a disconnected state
+
+````c#
+// Using ChangeTracker.Clear to make the unit test work properly
+[Fact]
+public void UsingChangeTrackerClear()
+{
+    //SETUP
+    var options = SqliteInMemory
+        .CreateOptions<EfCoreContext>();
+    using var context = new EfCoreContext(options);
+
+    // Sets up the test database with test data consisting of four books
+    context.Database.EnsureCreated();
+    context.SeedDatabaseFourBooks();
+
+    context.ChangeTracker.Clear(); // Calls ChangeTracker.Clear to stop tracking all entities
+
+    //ATTEMPT
+    var book = context.Books
+        .OrderBy(x => x.BookId).Last(); // Reads in the last book from your test set, which you know has two reviews
+    book.Reviews.Add(new Review { NumStars = 5 }); // When you try to add the new Review, EF Core throws a NullReferenceException because the Book's Review collection isn't loaded and therefore is null.
+    context.SaveChanges(); // Saves the Review to the database
+
+    //VERIFY
+    context.ChangeTracker.Clear(); // Calls ChangeTracker.Clear to stop tracking all entities
+    context.Books.Include(b => b.Reviews)
+        .OrderBy(x => x.BookId).Last()
+        .Reviews.Count.ShouldEqual(3); // Reloads the book with its Reviews to check whether there are three Reviews
+}
+````
+
+
+
+#### Test code by using multiple DbContext instances in a disconnected state
+
+````c#
+// Three separate DbContext instances that make the test work properly
+[Fact]
+public void UsingThreeInstancesOfTheDbcontext()
+{
+    //SETUP
+    var options = SqliteInMemory
+        .CreateOptions<EfCoreContext>(); // Creates the in-memory SQLite options in the same way as the preceding example
+    options.StopNextDispose();
+    using (var context = new EfCoreContext(options)) // Creates the first instance of the application's DbContext
+    {
+        context.Database.EnsureCreated();
+        context.SeedDatabaseFourBooks(); // Sets up the test database with test data consisting of four books, but this time in a separate DbContext instance
+    }
+    options.StopNextDispose();
+    using (var context = new EfCoreContext(options))
+    {
+        //ATTEMPT
+        var book = context.Books
+            .Include(x => x.Reviews)
+            .OrderBy(x => x.BookId).Last(); // Reads in the last book from your test set, which you know has two Reviews
+        book.Reviews.Add(new Review { NumStars = 5 }); // When you try to add the new Review, EF Core throws a NullReferenceException because the Book's Review collection isn't loaded and therefore is null.
+
+        context.SaveChanges(); // Calls SaveChanges to update the database
+    }
+    using (var context = new EfCoreContext(options))
+    {
+        //VERIFY
+        context.Books.Include(b => b.Reviews)
+            .OrderBy(x => x.BookId).Last()
+            .Reviews.Count.ShouldEqual(3); // Reloads the Book with its Reviews to check whether there are three Reviews
+    }
+}
+````
+
+
+
+### Capturing the database commands sent to a database
+
+Sometimes, it’s helpful to see what EF Core is doing when it accesses a real database, and EF Core provides a couple of ways to do that. Inspecting the EF Core logging from your running application is one way, but it can be hard to find the exact log among all the other logs. Another, more focused approach is to write unit tests that test specific parts of your EF Core queries by capturing SQL commands that EF Core would use to query the database.
+
+* The `LogTo` option extension, which makes it easy to filter and capture EF Core logging
+* The `ToQueryString` method, which shows the SQL generated from a LINQ query
+
+
+
+#### Using the LogTo option extension to filter and capture EF Core logging
+
+````c#
+// Outputting logs from an xUnit test by using the LogTo method
+public class TestLogTo // The class holding your unit tests of LogTo
+{
+    private readonly ITestOutputHelper _output; // An xUnit interface that allows output to the unit test runner
+
+    // xUnit will inject the ITestOutputHelper via the class’s constructor.
+    public TestLogTo(ITestOutputHelper output)
+    {
+        _output = output;
+    }
+
+    [Fact]
+    public void TestLogToDemoToConsole() // This method contains a test of LogTo.
+    {
+        //SETUP
+        var connectionString = this.GetUniqueDatabaseConnectionString(); // Provides a database connection where the database name is unique to this class
+        var builder = new DbContextOptionsBuilder<BookDbContext>()
+            .UseSqlServer(connectionString)
+            .EnableSensitiveDataLogging() // It is good to turn on EnableSensitiveData Logging in your unit tests.
+            .LogTo(_output.WriteLine); // Adds the simplest form of the LogTo method, which calls an Action<string> method
+        
+        using var context = new BookDbContext(builder.Options);
+        // … rest of unit test left out
+    }
+}
+````
+
+
+
+The default has the following format:
+
+* LINE1: `<loglevel(4 chars)> <DateTime.Now> <EventId> <Category>`
+* LINE2: `<the log message>`
+
+The following code snippet shows one of the logs in this format:
+
+* LINE1: `warn: 10/12/2020 11:59:38.658 CoreEventId.SensitiveDataLoggingEnabledWarning[10400] (Microsoft.EntityFrameworkCore.Infrastructure)`
+* LINE2: `Sensitive data logging is enabled. Log entries and exception messages may include sensitive application data; this mode should only be enabled during development.`
+
+As well as outputting the logs, the LogTo method can filter by the following types:
+
+* `LogLevel`, such as `LogLevel.Information` or `LogLevel.Warning`
+* `EventIds`, which define a specific log output, such as `CoreEventId.ContextInitialized` and `RelationalEventId.CommandExecuted`
+* Category names, which EF Core defines for commands in groups, such as `DbLoggerCategory.Database.Command.Name`
+* Functions that take in the `EventId` and the `LogLevel` and return `true` for the logs you want to be output
+
+````c#
+// The LogToOptions class with all the settings for the LogTo method
+public class LogToOptions
+{
+    // If false, your Action<string> method isn't called; defaults to true
+    public bool ShowLog { get; set; } = true;
+
+    // Only logs at or higher than the LogLevel property will be output; defaults to LogLevel.Information
+    public LogLevel LogLevel { get; set; } = LogLevel.Information;
+
+    // If not null, returns only logs with a Category name in this array; defaults to null
+    public string[] OnlyShowTheseCategories { get; set; }
+
+    // If not null, returns only logs with an EventId in this array; defaults to null
+    public EventId[] OnlyShowTheseEvents { get; set; }
+
+    // If not null, this function is called, and logs only where this function returns true are returned; defaults to null
+    public Func<EventId, LogLevel, bool> FilterFunction { get; set; }
+
+    // Controls the format of the EF Core log. The default setting does not prefix the log with extra information, such as LogLevel, DateTime, and so on.
+    public DbContextLoggerOptions LoggerOptions { get; set; } = DbContextLoggerOptions.None;
+}
+````
+
+````c#
+// Turning off log output until the //SETUP stage of the unit test is finished
+[Fact]
+public void TestEfCoreLoggingCheckSqlOutputShowLog()
+{
+    //SETUP
+    // In this case, you want to change the default LogToOptions to set the ShowLog to false.
+    var logToOptions = new LogToOptions
+    {
+        ShowLog = false
+    };
+    // This method sets up the SQLite in-memory options and adds LogTo to those options.
+    var options = SqliteInMemory
+        .CreateOptionsWithLogTo
+        <BookDbContext>(
+        	_output.WriteLine, // The parameter is your Action<string> method and must be provided.
+        	logToOptions); // The second parameter is optional, but in this case, you want to provide the logToOptions to control the output.
+
+    // This setup and seed section doesn't produce any output because the ShowLog property is false.
+    using var context = new BookDbContext(options);
+    context.Database.EnsureCreated();
+    context.SeedDatabaseFourBooks();
+
+    //ATTEMPT
+    logToOptions.ShowLog = true; // Turns on the logging output by setting the ShowLog property to true
+    var book = context.Books.Count(); // This query produces one log output, which will be sent to the xUnit runner's window.
+
+    //VERIFY
+} 
+````
+
+The result is that instead of wading through the logs from creating the database and seeding the database, you see only one log output in the xUnit runner’s window, as shown in the following code snippet:
+
+````sql
+Executed DbCommand (0ms) [Parameters=[],
+	CommandType='Text', CommandTimeout='30']
+SELECT COUNT(*)
+FROM "Books" AS "b"
+WHERE NOT ("b"."SoftDeleted")
+````
+
+
+
+#### Using the ToQueryString method to show the SQL generated from a LINQ query
+
+The logging output is great and contains lots of useful information, but if you simply want to see what your query looks like, you have a much simpler way. If you have built a database query that returns an `IQueryable` result, you can use the `ToQueryString` method. The following listing incorporates the output of the `ToQueryString` method in the test.
+
+````c#
+// A unit test containing the ToQueryString method
+[Fact]
+public void TestToQueryStringOnLinqQuery()
+{
+    //SETUP
+    var options = SqliteInMemory.CreateOptions<BookDbContext>();
+    using var context = new BookDbContext(options);
+    context.Database.EnsureCreated();
+    context.SeedDatabaseFourBooks();
+
+    //ATTEMPT
+    var query = context.Books.Select(x => x.BookId); // You provide the LINQ query without an execution part.
+    var bookIds = query.ToArray(); // Then you run the LINQ query by adding ToArray on the end.
+
+    //VERIFY
+    _output.WriteLine(query.ToQueryString()); // Outputs the SQL for your LINQ query
+    query.ToQueryString().ShouldEqual(
+        "SELECT \"b\".\"BookId\"\r\n" +
+        "FROM \"Books\" AS \"b\"\r\n" +
+        "WHERE NOT (\"b\".\"SoftDeleted\")"); // Tests whether the SQL is what you expected
+    bookIds.ShouldEqual(new []{1,2,3,4}); // Tests the output of the query
+}
+````
+
+
+
+### Summary
+
+* Unit testing is a way to test a unit of your code - a small piece of code that can be logically isolated in your application.
+* Unit testing is a great way to catch bugs when you develop your code and, more important, when you or someone else refactors your code.
+* We recommend using xUnit because it is widely used (EF Core uses xUnit and has ~70,000 tests), well supported, and fast.
+* An application’s DbContext designed to work with an ASP.NET Core application is ready for unit testing, but any application’s DbContext that uses the `OnConfiguring` method to set options needs to be modified to allow unit testing.
+* There are three main ways to simulate a database when unit testing, each with its own trade-offs:
+  * *Using the same type of database as your production database* - This approach is the safest, but you need to deal with out-of-date database schemas and managing databases to allow parallel running of unit test classes.
+  * *Using an SQLite in-memory database* - This approach is the fastest and easiest, but it doesn’t mimic every SQL feature of your production database.
+  * *Stubbing the database* - When you have a repository pattern for accessing the database, such as in business logic, stubbing that repository gives you fast and comprehensive control of the data for unit testing, but it typically needs more test code to be written.
+* Many unit tests need the test database to contain some data to be used in the test, so it’s worth spending time to design a suite of test methods that will create test data to use in your unit tests.
+* Your unit tests might say that the code under test is correct when it’s not. This situation can happen if one section of your unit test is picking up tracked instances from a previous stage of the test. You have two ways to ensure that this problem doesn’t happen: use separate DbContext instances or use `ChangeChanger.Clear`.
+* EF Core has added two methods that make capturing the SQL produced from your code much easier: the `LogTo` option to capture logging output and the `ToQueryString` method to convert LINQ queries to database commands.
+
+
+
+
+
+## appendix A A brief introduction to LINQ
+
+Language Integrated Query (LINQ)
+
+
+
+### An introduction to the LINQ language
