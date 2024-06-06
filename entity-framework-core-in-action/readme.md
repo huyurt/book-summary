@@ -12378,10 +12378,287 @@ public void TestToQueryStringOnLinqQuery()
 
 
 
-## appendix A A brief introduction to LINQ
+## Appendix A. A brief introduction to LINQ
 
 Language Integrated Query (LINQ)
 
 
 
 ### An introduction to the LINQ language
+
+#### The two ways you can write LINQ queries
+
+LINQ has two syntaxes for writing LINQ queries: the method syntax and the *query* syntax.
+
+
+
+````c#
+// Your first look at the LINQ language using the method/lambda syntax
+int[] nums = new[] {1, 5, 4, 2, 3, 0}; // Creates an array of integers from 0 to 5, but in a random order
+
+int[] result = nums // Applies LINQ commands and returns a new array of integers
+    .Where(x => x > 3) // Filters out all the integers 3 and below
+    .OrderBy(x => x) // Orders the numbers
+    .ToArray(); // Turns the query back into an array. The result is an array of ints { 4, 5 }.
+````
+
+The *lambda* name comes from lambda syntax, introduced in C# 3. The lambda syntax allows you to write a method without all the standard method definition syntax. The `x => x > 3` part inside the `Where` method is equivalent to the following method:
+
+````c#
+private bool AnonymousFunc(int x)
+{
+    return x > 3;
+}
+````
+
+
+
+````c#
+// Your first look at the LINQ language using the query syntax
+int[] nums = new[] { 1, 5, 4, 2, 3, 0}; // Creates an array of integers from 0 to 5, but in random order
+
+IOrderedEnumerable<int> result = // The result returned here is an IOrderedEnumerable<int>.
+    from num in nums // The query syntax starts with a from <item> in <collection>.
+    where num > 3 // Filters out all the integers 3 and below
+    orderby num // Orders the numbers
+    select num; // Applies a select to choose what you want. The result is an IOrderedEnumerable<int> containing { 4, 5 }.
+````
+
+
+
+The query syntax has a feature specifically to handle the concept of precalculating values: the `let` keyword. This keyword allows you to calculate a value once and then use that value multiple times in the query, making the query more efficient.
+
+````c#
+// Using the let keyword in a LINQ query syntax
+int[] nums = new[] { 1, 5, 4, 2, 3, 0 }; // Creates an array of integers from 0 to 5, but in random order
+
+string [] numLookop = new[] {"zero","one","two","three","four","five"}; // A lookup to convert a number to its word format
+
+IEnumerable<int> result = // The result returned here is an IEnumerable<int>.
+    from num in nums // The query syntax starts with a from <item> in <collection>.
+    let numString = numLookop[num] // The let syntax allows you to calculate a value once and use it multiple times in the query.
+    where numString.Length > 3 // Filters out all the numbers indicating that the word is shorter than three letters
+    orderby numString // Orders the number by the word form
+    select num; // Applies a select to choose what you want. The result is an IEnumerable<int> containing { 5,4,3,0 }.
+````
+
+````c#
+// Using the LINQ Select operator to hold a calculated value
+int[] nums = new[] { 1, 5, 4, 2, 3, 0 }; // Creates an array of integers from 0 to 5, but in random order
+string[] numLookop = new[] {"zero","one","two","three","four","five"}; // A lookup to convert a number to its word format
+
+IEnumerable<int> result = nums // The result returned here is an IEnumerable<int>.
+    .Select(num => new
+    {
+        num,
+        numString = numLookop[num]
+    }) // Uses an anonymous type to hold the original integer value and your numString word lookup
+    .Where(r => r.numString.Length > 3) // Filters out all the numbers indicating that the word is shorter than three letters
+    .OrderBy(r => r.numString) // Orders the number by the word form
+    .Select(r => r.num); // Applies another Select to choose what you want. The result is an IEnumerable<int> containing { 5,4,3,0 }.
+````
+
+
+
+#### The data operations you can do with LINQ
+
+The LINQ feature has many methods, referred to as operators.
+
+Examples of LINQ operators, grouped by purpose
+
+| Group          | Examples (not all operators shown)        |
+| -------------- | ----------------------------------------- |
+| Sorting        | `OrderBy`, `OrderByDescending`, `Reverse` |
+| Filtering      | `Where`                                   |
+| Select element | `First`, `FirstOrDefault`                 |
+| Projection     | `Select`                                  |
+| Aggregation    | `Max`, `Min`, `Sum`, `Count`, `Average`   |
+| Partition      | `Skip`, `Take`                            |
+| Boolean tests  | `Any`, `All`, `Contains`                  |
+
+
+
+````c#
+// A Review class and a ReviewsList variable containing two Reviews
+class Review
+{
+    public string VoterName { get; set; }
+    public int NumStars { get; set; }
+    public string Comment { get; set; }
+}
+
+List<Review> ReviewsList = new List<Review>
+{
+    new Review
+    {
+        VoterName = "Jack",
+        NumStars = 5,
+        Comment = "A great book!"
+    },
+    new Review
+    {
+        VoterName = "Jill",
+        NumStars = 1,
+        Comment = "I hated it!"
+    }
+}; 
+````
+
+
+
+LINQ group
+
+* Projection
+
+  * Code using LINQ operators
+
+    ````c#
+    string[] result = ReviewsList
+        .Select(p => p.VoterName)
+        .ToArray();
+    ````
+
+  * Result value
+
+    ````c#
+    string[]{"Jack", "Jill"}
+    ````
+
+* Aggregation
+
+  * Code using LINQ operators
+
+    ````c#
+    double result = ReviewsList
+        .Average(p => p.NumStars);
+
+  * Result value
+
+    ````c#
+    3 (average of 5 and 1)
+
+* Select element
+
+  * Code using LINQ operators
+
+    ````c#
+    string result = ReviewsList
+        .First().VoterName;
+
+  * Result value
+
+    ````c#
+    "Jack" (first voter)
+
+* Boolean test
+
+  * Code using LINQ operators
+
+    ````c#
+    bool result = ReviewsList
+        .Any(p => p.NumStars == 1);
+
+  * Result value
+
+    ````c#
+    true (Jill voted 1)
+
+
+
+### Introduction to IQueryable<T> type, and why it’s useful
+
+Another important part of LINQ is the generic interface `IQueryable<T>`. LINQ is rather special, in that whatever set of LINQ operators you provide isn’t executed straightaway but is held in a type called `IQueryable<T>`, awaiting a final command to execute it. This `IQueryable<T>` form has two benefits:
+
+* You can split a complex LINQ query into separate parts by using the `IQueryable<T>` type.
+* Instead of executing the `IQueryable<T>`'s internal form, EF Core can translate it into database access commands.
+
+
+
+#### Splitting up a complex LINQ query by using the IQueryable<T> type
+
+````c#
+// Your method encapsulates part of your LINQ code via IQueryable<int>
+public static class LinqHelpers // Extension method needs to be defined in a static class
+{
+    public static IQueryable<int> MyOrder( // Static method Order returns an IQueryable<int> so other extension methods can chain on
+        this IQueryable<int> queryable, // Extension method’s first parameter is of IQueryable and starts with the this keyword
+        bool ascending) // Provides a second parameter that allows you to change the order of the sorting
+    {
+        return ascending // Uses the Boolean parameter ascending to control whether you add the OrderBy or OrderByDescending LINQ operator to the IQueryable result
+            ? queryable
+            	.OrderBy(num => num) // Ascending parameter is true, so you add the OrderBy LINQ operator to the IQueryable input
+            : queryable
+                .OrderByDescending(num => num); // Ascending parameter is false, so you add the OrderByDescending LINQ operator to the IQueryable input
+    }
+}
+````
+
+````c#
+// Using the MyOrder IQueryable<int> method in LINQ code
+var numsQ = new[] { 1, 5, 4, 2, 3 }
+	.AsQueryable(); // Turns an array of integers into a queryable object
+
+var result = numsQ
+    .MyOrder(true) // Calls the MyOrder IQueryable<int> method, with true, giving you an ascending sort of the data
+    .Where(x => x > 3) // Filters out all the numbers 3 and below
+    .ToArray(); // Executes the IQueryable and turns the result into an array. The result is an array of ints { 4, 5 }.
+````
+
+Extension methods, such as the MyOrder example, provide two useful features:
+
+* *They make your LINQ code dynamic.* By changing the parameter into the MyOrder
+  method, you can change the sort order of the final LINQ query. If you didn’t
+  have that parameter, you’d need two LINQ queries - one using `OrderBy` and one using `OrderByDescending` - and then you’d have to pick which one you
+  wanted to run by using an `if` statement. That approach isn’t good software practice,
+  as you’d be needlessly repeating some LINQ code, such as the `Where` part.
+* *They allow you to split complex queries into a series of separate extension methods that you
+  can chain.* This approach makes it easier to build, test, and understand complex
+  queries.
+
+````c#
+// The book list query with select, order, filter, and page Query Objects
+public IQueryable<BookListDto> SortFilterPage
+    (SortFilterPageOptions options)
+{
+    var booksQuery = _context.Books
+        .AsNoTracking()
+        .MapBookToDto()
+        .OrderBooksBy(options.OrderByOptions)
+        .FilterBooksBy(options.FilterBy,
+                       options.FilterValue);
+
+    options.SetupRestOfDto(booksQuery);
+
+    return booksQuery.Page(options.PageNum - 1, options.PageSize);
+}
+````
+
+The book list query uses both features: it allows you to change the sorting, filtering, and paging of the book list dynamically, and it hides some of the complex code behind an aptly named method that tells you what it’s doing.
+
+
+
+#### How EF Core translates IQueryable<T> into database code
+
+EF Core translates your LINQ code into database code that can run on the database server. It can do this because the `IQueryable<T>` type holds all the LINQ code as an expression tree, which EF Core can translate into database access code.
+
+EF Core provides many extra extension methods to extend the LINQ operators available to you. EF Core methods add to the LINQ expression tree, such as `Include`, `ThenInclude`, and so on. Other EF methods provide async versions of the LINQ methods, such as `ToListAsync` and `LastAsync`.
+
+
+
+### Querying an EF Core database by using LINQ
+
+
+
+![](./diagrams/images/A1.quering_ef_core_database_by_using_linq.png)
+
+
+
+![](./diagrams/images/A2.example_database_access.png)
+
+
+
+These three parts of an EF Core database query are as follows:
+
+* *Application's DbContext property access* - In your application’s DbContext, you define a property by using a `DbSet<T>` type. This type returns an `IQueryable<T>` data source to which you can add LINQ operators to create a database query.
+* *LINQ operators and/or EF Core LINQ methods* - Your database LINQ query code goes here.
+* *The execute command* - Commands such as `ToList` and `First` trigger EF Core to translate the LINQ commands into database access commands that are run on the database server.
